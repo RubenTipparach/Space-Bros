@@ -28,20 +28,26 @@ An incremental, persistent, multiplayer galaxy-conquest game. Browser-based
 See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the deeper design
 (data model, request lifecycles, failure modes, scaling envelope).
 
-## Services / stack (cheap + Vercel-friendly)
+## Services / stack (cheap + Vercel-only in v1)
 
-| Concern       | Pick                        | Notes                                         |
-| ------------- | --------------------------- | --------------------------------------------- |
-| Client + API  | Next.js on **Vercel**       | App Router, API routes, cron — one deploy    |
-| Renderer      | Three.js + @react-three/fiber | Added in Chunk 2                            |
-| DB            | **Neon Postgres**           | Free tier, native Vercel integration          |
-| Cache / queue | **Upstash Redis**           | Serverless, free tier                         |
-| Worker        | **Vercel Cron**             | Hits `/api/tick` every minute, drains events  |
-| Auth          | **Clerk** (or Supabase)     | Free tier, mobile-friendly social login       |
-| Realtime      | Polling + SSE (v1)          | Idle game; WebSockets only if we need them    |
+| Concern       | Pick                          | Notes                                        |
+| ------------- | ----------------------------- | -------------------------------------------- |
+| Client + API  | Next.js on **Vercel**         | App Router, API routes, cron — one deploy   |
+| Renderer      | Three.js + @react-three/fiber | Added in Chunk 2                             |
+| DB            | **Neon Postgres**             | Free tier, native Vercel integration         |
+| Worker        | **Vercel Cron**               | Hits `/api/tick` every minute, drains events |
+| Auth          | **Clerk** (or Supabase)       | Free tier, mobile-friendly social login      |
+| Realtime      | Polling (15s / 60s)           | Idle game; SSE + Redis added later if needed |
 
-_Deliberately skipped:_ SpaceTimeDB (pushes logic into a tick-model DB with
-its own hosting; fights our lazy-sim approach), dedicated WS servers.
+_Deliberately skipped (v1):_
+- SpaceTimeDB — fights our lazy-sim model, adds hosting lock-in.
+- Upstash / Redis — not needed for polling. Add it only when sub-15-second
+  push matters. See [`ARCHITECTURE.md` §5, §10](./ARCHITECTURE.md).
+- Dedicated WebSocket servers.
+
+_Universe model:_ **persistent** (no seasonal wipes). See
+[`ARCHITECTURE.md` §9](./ARCHITECTURE.md) for the new-player fairness
+mechanics that make this work.
 
 ## Build plan (chunks)
 

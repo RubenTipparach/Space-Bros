@@ -14,8 +14,9 @@ sync when the design shifts.
    back to an empire that advanced exactly as it would have if they'd watched.
 3. **Mobile-first.** Touch-driven Three.js viewer, small payloads, works on a
    flaky connection.
-4. **Cheap to run.** Vercel + Neon + Upstash on free tiers for development and
-   low traffic; scale within the same primitives.
+4. **Cheap to run.** Vercel + Neon on free tiers for development and
+   low traffic; scale within the same primitives. No additional paid
+   infrastructure in v1.
 5. **Fair.** Being online can't be a precondition for surviving. Rules are
    time-symmetric: whatever happens to an offline player would have happened
    if they'd been watching.
@@ -60,20 +61,26 @@ with tight reducer tests and `SELECT FOR UPDATE` around event application.
 Shapes below are sketches, not final DDL. The authoritative definitions will
 live in `packages/shared/src/state.ts` and a SQL migration.
 
-| Table             | Key                 | Notes                                                                          |
-| ----------------- | ------------------- | ------------------------------------------------------------------------------ |
-| `galaxies`        | `season_id`         | Seed, generator version, start/end timestamps. One row per season.             |
-| `players`         | `player_id`         | Auth ID, display name, home-planet pick, season.                               |
-| `colonies`        | `colony_id`         | Owner, planet ref (`star_id:planet_idx`), population accumulator, buildings.   |
-| `fleets`          | `fleet_id`          | Owner, composition (jsonb), from, to, depart/arrive timestamps.                |
-| `research`        | `player_id, tech_id`| Completed techs. In-progress research lives in `events`.                       |
-| `events`          | `event_id`          | `kind`, `fire_at`, `owner_id`, `payload jsonb`. Indexed on `fire_at`.          |
-| `orders_log`      | `order_id`          | Append-only audit of player orders. Useful for rollback / debugging.           |
+| Table             | Key                  | Notes                                                                          |
+| ----------------- | -------------------- | ------------------------------------------------------------------------------ |
+| `galaxy`          | singleton (`id = 1`) | Seed + generator version. One row, ever. Immutable except for generator bumps. |
+| `players`         | `player_id`          | Auth ID, display name, home-planet pick, created_at, last_active_at.           |
+| `colonies`        | `colony_id`          | Owner, planet ref (`star_id:planet_idx`), population accumulator, buildings.   |
+| `planet_overlays` | `planet_id`          | Sparse — only rows for planets that have been terraformed or pinned.           |
+| `fleets`          | `fleet_id`           | Owner, composition (jsonb), from, to, depart/arrive timestamps.                |
+| `research`        | `player_id, tech_id` | Completed techs. In-progress research lives in `events`.                       |
+| `events`          | `event_id`           | `kind`, `payload_version`, `fire_at`, `owner_id`, `payload jsonb`. Indexed on `fire_at`. |
+| `orders_log`      | `order_id`           | Append-only audit of player orders. Useful for rollback / debugging.           |
 
 Planets and stars are **not stored.** They are a pure function of
-`galaxies.seed + generator_version`. If we ever need to pin a planet's state
-(e.g. because a player terraformed it), we store a sparse **overlay** row
-keyed by `(planet_id, season_id)`. Most planets will never have an overlay.
+`galaxy.seed + generator_version`. When a player terraforms a planet or any
+other action pins its state, we insert a sparse row into `planet_overlays`.
+Most planets will never have an overlay. If we ever bump
+`generator_version`, we keep the old version in the shared lib so existing
+overlays continue to resolve the planet they refer to.
+
+Each event carries a `payload_version` so reducers can evolve payloads
+without rewriting queued events (see §10 for the compatibility policy).
 
 ## 4. Request lifecycles
 
@@ -115,14 +122,17 @@ Vercel Cron hits `/api/tick` every minute. The handler:
 1. `SELECT event_id FROM events WHERE fire_at <= now() ORDER BY fire_at LIMIT 500 FOR UPDATE SKIP LOCKED`.
 2. For each event: load owner's affected state, call the pure `processEvent`
    reducer, persist updates + follow-ups, delete the event.
-3. Publishes a Redis pub/sub message on `player:<id>:delta` for any
-   connected clients listening over SSE.
+3. Bumps `players.last_sim_at` so the next client poll knows there's
+   something new to fetch.
 
 `SKIP LOCKED` means we can run multiple tick handlers concurrently (Vercel
-Cron + on-demand triggers) without double-processing. The 500-event cap
-prevents a backlog from blowing the function timeout; the next minute mops
-up the rest. If backlog grows beyond a threshold we alert and scale up tick
-frequency.
+Cron + on-demand triggers from reads) without double-processing. The
+500-event cap prevents a backlog from blowing the function timeout; the
+next minute mops up the rest. If backlog grows beyond a threshold we alert
+and scale up tick frequency.
+
+No pub/sub fanout in v1 — clients poll (see §5). When we need sub-15-second
+pushes, we add a Redis-backed SSE channel here.
 
 ### 4.4 Fleet vs fleet (combat)
 
@@ -140,19 +150,24 @@ interpolated from `(from, to, depart_at, arrive_at)`.
 
 ## 5. Realtime transport
 
-v1: **polling + SSE**, not WebSockets.
+v1: **polling only.** No SSE, no WebSockets, no pub/sub.
 
 - Client polls `/api/me` on an interval (15s default, 60s when tab is
-  hidden). Low priority.
-- When viewing your own empire, client opens an SSE stream to
-  `/api/stream` that forwards Redis pub/sub `player:<id>:delta` messages.
-  SSE survives Vercel's request timeouts by reconnecting; the client dedupes
-  on a monotonic `delta_seq`.
-- No server-pushed state for other players' empires — the fog-of-war model
-  means you only see intelligence at the moment you scan.
+  hidden, paused when backgrounded on mobile). Low priority.
+- `/api/me` is cheap: catches up the caller's overdue events, returns
+  their state slice + a visible-sector slice of the galaxy. Most polls
+  return an unchanged `last_sim_at` and the client short-circuits rendering.
+- For important transitions (arrival, research complete), the client can
+  drop the interval to 3s for a couple of minutes after the ETA so the
+  update feels instant.
+- No server-pushed state for other players' empires — fog of war means you
+  only see intelligence at the moment you scan.
 
-We can swap to WebSockets if we ever need two-way realtime for something
-like real-time diplomacy chat. Until then, SSE is enough and much cheaper.
+Why no SSE yet: requires a pub/sub layer (Redis) and long-lived
+connections that Vercel Functions don't do well. The minute we need
+sub-15-second latency we add a Redis-backed SSE channel (Upstash or Vercel
+KV), reusing the same `/api/tick` that already knows when state changed.
+Until then, polling is free and enough for an idle game.
 
 ## 6. Determinism and fairness
 
@@ -170,20 +185,23 @@ like real-time diplomacy chat. Until then, SSE is enough and much cheaper.
 
 ## 7. Scaling envelope and cost
 
-Expected v1 load (single season, 500 active players, 20k stars):
+Expected v1 load (persistent world, 500 active players, 20k stars):
 
-| Resource         | Estimate            | Tier                            |
-| ---------------- | ------------------- | ------------------------------- |
-| DB rows          | < 5 M total         | Neon free (0.5 GB) → Launch tier |
-| Event rate       | ~5 events/sec peak  | Neon happily handles 100×        |
-| Cron invocations | 1 / min             | Vercel Cron included            |
-| API requests     | < 1 M / month       | Vercel free tier                |
-| Redis ops        | < 500 K / month     | Upstash free tier               |
+| Resource         | Estimate                      | Tier                            |
+| ---------------- | ----------------------------- | ------------------------------- |
+| DB rows          | < 5 M colonies/fleets/events  | Neon free (0.5 GB) → Launch tier |
+| Event rate       | ~5 events/sec peak            | Neon handles 100× comfortably    |
+| Cron invocations | 1 / min (~43 k / month)       | Vercel Cron included            |
+| API requests     | < 1 M / month @ 15s polling   | Vercel free tier                |
+
+Because the universe is persistent, `events` and `orders_log` grow forever.
+Plan: partition `events` monthly (Postgres declarative partitioning) and
+archive old `orders_log` shards to cold storage after 90 days. Neither is
+needed on day one — both become necessary somewhere around 10 M rows.
 
 If any of those tip over, the fix is a paid tier on the same provider, not
 a re-architecture. We avoid hard vendor coupling: Postgres is Postgres
-(Neon → Supabase → RDS), Redis is Redis (Upstash → ElastiCache), the app is
-a plain Next.js app.
+(Neon → Supabase → RDS), the app is a plain Next.js app.
 
 ## 8. Failure modes
 
@@ -199,19 +217,68 @@ a plain Next.js app.
 - **Time skew / daylight saving / leap seconds.** We only use UTC epoch ms
   server-side. Clients display local time but never submit time.
 
-## 9. Seasons vs persistent universe
+## 9. Persistent universe and new-player fairness
 
-Persistent universes get dominated by early players. We plan seasons from
-day one: each season is a new `galaxy_id`, a wipe of colonies / fleets /
-events, and a preserved `player_profile` row that carries cosmetic / meta
-progress across seasons.
+We picked a single persistent universe — no seasonal wipes. Civilizations
+live forever; empires grow over years of real time. This is the core
+fantasy of the game and seasons would undercut it.
 
-Implications:
-- All foreign keys are scoped by season.
-- The galaxy generator is stable across seasons only in structure; the seed
-  changes so planets reshuffle.
-- Migrations add new event kinds, never remove or repurpose old ones —
-  old event rows must remain processable at least until the season ends.
+Persistent MMOs have a well-known failure mode: early arrivals compound
+their lead, new players can't catch up, churn kills the game. We mitigate
+deliberately; none of these are optional, they are load-bearing.
+
+**Catch-up ramps for new players.**
+- First 14 days of play: 3× resource rate, 2× research speed, free starter
+  fleet. Decays linearly to 1× at day 30.
+- "Lost civilization" bonus: on account creation, roll a small random
+  tech-tree head start so two new players on the same day aren't identical
+  and the top of the tree isn't so far away that the early game feels
+  pointless.
+
+**Soft caps and diminishing returns on veteran power.**
+- Research cost scales with the player's total completed research, not
+  just the next tech — long-term players pay a galactic-knowledge tax.
+- Per-colony population cap scales with building level but plateaus
+  quickly; empire scaling comes from _more colonies_ (which takes time
+  and is visible to neighbours) rather than infinite vertical stacking.
+- Fleet upkeep costs scale superlinearly in fleet size — huge stacks are
+  not free to maintain, which penalises parked doomstacks.
+
+**Structural protections.**
+- **Sanctuary sectors** near each player's home: only players within a
+  small power band can attack inside. Leaves the sanctuary when you
+  build outside it.
+- **Offline shield**: see §6. In a persistent world this is critical —
+  without it, vacation = death.
+- **Attacker cooldown**: you can't repeatedly attack the same colony
+  within a short window. Breaks farming patterns.
+- **Inactivity decay**: players inactive for 30 days lose their shield;
+  at 90 days, undefended colonies decay (buildings degrade, population
+  drifts to zero) and eventually revert to neutral planets that anyone
+  can colonise. Player's research and cosmetic progress survive — they
+  can return and rebuild.
+
+**Leaderboards over sliding windows.**
+- Rankings are 30-day and 90-day, not all-time. An all-time board exists
+  for bragging rights but doesn't gate content.
+
+**Content expansion as a substitute for wipes.**
+- When the meta stalls, we add new tech tiers, new ship hulls, new biomes,
+  new mid-late-game goals. Veterans get a new horizon; new players can
+  skip to the latest tier via the catch-up ramp.
+- We explicitly reserve the option of a one-time "great reset" event
+  later in the game's life, but it would be signaled months ahead and
+  cosmetic rewards would preserve veteran identity.
+
+**Schema and event-payload compatibility.**
+Because the world never wipes, every event payload shape we ship must
+remain processable indefinitely. Rules:
+- Every event row carries a `payload_version int`.
+- Reducers switch on `(kind, payload_version)` and only add new
+  handlers — never remove old ones.
+- Breaking a payload is done by adding a new kind, not mutating an old one.
+- Schema migrations are additive; columns get dropped only after a
+  follow-up migration ensures no event references them.
 
 ## 10. Technology decisions (with trade-offs)
 
@@ -220,20 +287,33 @@ Implications:
 - **Neon Postgres.** Branching for PR previews, serverless Postgres, Vercel
   integration. Trade-off: cold starts on the free tier; pre-warm via the
   tick cron.
-- **Upstash Redis.** HTTP-friendly Redis that works from Vercel Functions.
-  Trade-off: not the fastest per-op; fine for pub/sub + small caches.
+- **No Redis / Upstash in v1.** Rate limits, caching, and read-after-write
+  all live in Postgres for now. Trade-off: polling-only realtime (~15 s
+  latency). We add Redis only when we need sub-15-second pushes, and it
+  will be a pure addition — no schema changes required.
 - **Clerk** for auth. Trade-off: vendor lock; mitigated by storing only the
   subject claim in our DB, so we could swap to Supabase Auth.
 - **No SpaceTimeDB, no dedicated game server.** Trade-off: we lose the
   "logic lives next to data" model. We gain: stateless functions, no VMs,
   no game-loop ownership, cheap.
-- **Polling + SSE, not WebSockets (v1).** Trade-off: higher latency for
-  cross-player events (~15 s worst case). Acceptable for an idle game.
+- **Polling, not WebSockets (v1).** Trade-off: ~15-second latency floor
+  for cross-player events. Acceptable for an idle game. SSE + pub/sub is
+  a later upgrade, not a rewrite.
+- **Persistent universe, not seasons.** Trade-off: more live-ops work
+  (balance patches, content expansions) to keep the game fair and
+  interesting over the long haul. Pays off in the "your civilization is
+  real and lasting" fantasy that is core to the game's identity.
 
 ## 11. What this doc will eventually need
 
-- Exact Postgres DDL once Chunk 4 lands.
-- Formal event payload schemas (today they're stubbed in `packages/shared`).
-- The balance sheet: resource rates, research costs, ship build times.
+- Exact Postgres DDL once Chunk 4 lands, including the partitioning
+  scheme for `events` and `orders_log`.
+- Formal event payload schemas with `payload_version` tags (today they're
+  stubbed in `packages/shared`).
+- The balance sheet: resource rates, research costs, ship build times,
+  and how the new-player catch-up curves land on those numbers.
 - Admin / moderation flow.
-- Backup + season-rollover runbook.
+- Backup + disaster-recovery runbook (there is no "just start the new
+  season" escape hatch in a persistent world, so backups matter more).
+- Inactivity-decay spec: exact thresholds, how buildings degrade, who
+  inherits a decayed colony.
