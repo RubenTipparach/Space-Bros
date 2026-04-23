@@ -9,186 +9,294 @@ capture the intent, tune once the loop works end-to-end.
 
 ## 1. Pitch in one sentence
 
-Pick a home planet in a persistent galaxy, grow an economy, research your way
-up a tech tree, and colonize the stars. Idle-paced: minutes-to-days of
-wall-clock time. Single-player works standalone; multiplayer shares the same
-galaxy once auth is wired.
+Pick a home planet in a persistent galaxy, grow an economy across diverse
+colonies, research your way up a tech tree, and build an interstellar
+financial empire. Idle-paced: minutes-to-days of wall-clock time. Single-
+player works standalone; multiplayer shares the same galaxy once auth is wired.
 
 ## 2. Core loop
 
 1. **Pick home** — one habitable planet, one shot.
-2. **Build** — queue mines / power / labs / habitats at a colony. Each one
-   finishes in wall-clock time and raises a rate.
-3. **Research** — spend science on techs that multiply rates, unlock buildings,
-   faster ships, terraforming.
-4. **Expand** — launch a colony ship to a target star. Travel takes minutes
-   to days depending on distance and speed.
-5. **Repeat.** Scale wins: ten colonies pulling resources feed research,
-   which unlocks bigger colony ships and more colonies, which feed research…
+2. **Develop the colony** — queue mines / farms / trade hubs / labs /
+   barracks. Buildings produce **local** resources (except trade hubs,
+   which produce global **credits**).
+3. **Grow population** — food produced locally plus planet biome determine
+   growth; tech and building variety raise the cap.
+4. **Research** — spend science (local, stockpiled at a colony) on techs
+   that evolve each branch toward late-game megatech.
+5. **Expand** — launch colony ships with metal + credits. Every new colony
+   is a fresh stockpile to specialize.
+6. **Aggregate** — trade hubs at every colony funnel local production into
+   a single global credits pool; your **GDP** (credits/s) is the headline
+   score.
 
-The ceiling on progress is _real time_, not clicks. Players close the tab
-and come back to a larger empire.
+The real tension: each colony is its own little economy that has to be
+_self-sufficient_ for what it consumes locally, but specialized colonies
+earn more credits by concentrating on what their biome does best.
 
 ## 3. Resources
 
-Three currencies, stored as `(value, rate, t0)` accumulators:
+**Credits (global)** — the only resource that lives at the empire level.
+Earned by trade hubs; spent on ships, terraforming, and higher-tier
+buildings. Credits are what GDP is measured in (see §9).
 
-| Resource | Sources                                          | Sinks                      |
-| -------- | ------------------------------------------------ | -------------------------- |
-| Metal    | Mines, home colony baseline                      | Buildings, ships           |
-| Energy   | Power plants, home colony baseline, reactor tech | Buildings, ships, upkeep   |
-| Science  | Research labs, home colony baseline              | Research, terraforming     |
+**Four per-colony resources:**
 
-Starting rates (from picking home): **1 metal/s · 0.5 energy/s · 0.5 science/s**.
-These are the _baseline_ from the capital itself; buildings add on top.
+| Resource | Produced by     | Consumed by                           |
+| -------- | --------------- | ------------------------------------- |
+| Metal    | Mining          | Buildings, ships (launched from this colony) |
+| Food     | Farming         | Population growth at this colony      |
+| Science  | Science labs    | Research started at this colony       |
+| Military | Barracks        | (MVP: score contribution; combat later)  |
 
-No per-colony stockpiles in v1. Resources are **a single global pool per
-player**, refilled by every colony. (Keeps the UI trivially simple; revisit
-if logistics becomes a mechanic.)
+Per-colony means: **the metal at colony A does not pay for a building at
+colony B.** Each colony has its own four-accumulator stockpile. To build a
+Mine III at your mining colony, that colony has to have enough metal on
+hand. To start a research at a science colony, that colony has to have
+enough science stockpiled.
+
+**Transportation** (deferred past MVP; see §11): eventually, hauler ships
+move resources between colonies at some cost. Until that lands, the design
+nudges players to make each colony self-sufficient for what it consumes
+(enough metal to keep building, enough food for its pop), and rewards
+specialization via trade-hub credits conversion.
+
+The single global credits pool means you _can_ shift economic weight
+between colonies just by choosing where to build — a trade hub anywhere
+funds a ship launched anywhere.
 
 ## 4. Population
 
-Per-colony accumulator. Also `(value, rate, t0)`, with a `cap`.
+Per-colony accumulator `(value, rate, t0)` plus a computed cap.
 
-- Growth rate = `0.05 × habitability` per second (earthlike ≈ 0.05 pop/s).
-- Below `HABITABLE_MIN_HABITABILITY = 0.2`, rate is **0** — this is what makes
-  a planet an "outpost." It exists, contributes via buildings, but doesn't
-  grow population. Terraforming unlocks growth.
-- Cap starts at **1000**, raised by Habitat buildings (+5000 per level).
+### 4.1 Cap formula
+
+```
+cap = biomeBase(biome)
+    × techMultiplier(player)
+    × varietyBonus(colony)
+```
+
+**Biome base** — the planet's raw carrying capacity. Gas and molten are
+~zero; earthlike is ~25k.
+
+| Biome      | Base     |
+| ---------- | -------- |
+| molten     | 500      |
+| gas        | 0        |
+| toxic      | 1 000    |
+| ice        | 2 000    |
+| rocky      | 3 000    |
+| desert     | 5 000    |
+| tundra     | 8 000    |
+| jungle     | 20 000   |
+| earthlike  | 25 000   |
+| ocean      | 15 000   |
+
+**Tech multiplier** — starts at 1.0. Habitat techs raise it globally:
+`better_habitats` → ×1.5; `arcologies` → ×2.5; `megacities` → ×5.
+
+**Variety bonus** — "need a variety of buildings to fill jobs." A colony
+with only one type of building supports a basic population; having all
+five types (mining + farming + trading + science + warfare) doubles the
+cap.
+
+| Distinct building types | Variety multiplier |
+| ----------------------- | ------------------ |
+| 0 or 1                  | 0.5                |
+| 2                       | 1.0                |
+| 3                       | 1.3                |
+| 4                       | 1.6                |
+| 5                       | 2.0                |
+
+### 4.2 Growth
+
+Pop grows toward cap when food production meets consumption.
+
+- **Food consumption** = `pop / 10 000` food/s. (10k pop ≈ 1 food/s.)
+- **Base growth rate** = `0.05 × habitability` pop/s at the colony.
+- **Effective growth rate** = `baseGrowth × clamp(foodProduced / foodConsumed, 0, 1.5)`.
+  - Surplus food accelerates growth (up to 1.5× bonus).
+  - Starvation (food < consumption) halts growth at zero.
+  - v1: no population decay below consumption — pop just stops. Revisit.
+
+Pop above cap is impossible in v1 — growth clamps at cap. (Future: soft
+overflow with decay.)
 
 ## 5. Buildings
 
-**v1 catalog** — four types, three tiers each. Tier N requires the Tier N-1
-of the same type, plus a tech unlock for Tier 2 and Tier 3.
+Five types, three tiers each. One build slot per colony in MVP (parallel
+queues come later).
 
-Each level instance is queued at one colony. One build at a time per colony
-(v1; later: parallel queue per tier). Build completes → rate recomputed for
-the whole player.
+**Every building produces exactly one resource.** Exception: trade hubs
+produce credits (the global resource), and their output is boosted by the
+colony's _variety_ — a lonely trade hub in a one-building colony earns
+little, a trade hub in a full-spectrum colony earns a lot.
 
-| Building       | Effect per level           | Cost (T1 → T2 → T3) | Time (T1/T2/T3) | Unlock (T2/T3)         |
-| -------------- | -------------------------- | ------------------- | --------------- | ---------------------- |
-| Mine           | +0.5 / +1.5 / +4 metal/s   | 50M/20E → 150M → 400M/100E | 30s / 90s / 4m | `mining_i` / `mining_ii` |
-| Power plant    | +0.5 / +1.5 / +4 energy/s  | 40M → 120M → 320M/40E | 30s / 90s / 4m | `fusion_i` / `fusion_ii` |
-| Research lab   | +0.5 / +1.5 / +4 science/s | 80M/40E → 240M/120E → 640M/320E/80S | 60s / 3m / 8m | `scientific_method` / `computing` |
-| Habitat        | +5000 / +15000 / +40000 pop cap | 100M/20E → 300M/60E → 800M/160E | 60s / 3m / 8m | `better_habitats` / `arcologies` |
+Tier 2 and Tier 3 require **prereq tech + prereq building tier** at the
+same colony.
 
-Building effect is **global to the player**, not per-colony. A mine at a
-dusty outpost adds to the same metal pool as one at home.
+### 5.1 Tier matrix
+
+All times are real-world seconds. Costs use L prefix for "local" (metal,
+food, science, military at _this_ colony) and G for "global" (credits).
+
+| Building  | Tier 1                                  | Tier 2                                  | Tier 3                                      | Unlock (T2 / T3)            |
+| --------- | --------------------------------------- | --------------------------------------- | ------------------------------------------- | --------------------------- |
+| Mine      | 50 L-metal, 30 s, **+0.5 metal/s**      | 150 L-metal + 50 G-credits, 90 s, **+1.5 metal/s**   | 400 L-metal + 200 G + 80 L-food, 5 m, **+4 metal/s** | Mining I / Mining II        |
+| Farm      | 40 L-metal, 30 s, **+0.3 food/s**       | 120 L-metal + 40 G, 90 s, **+1 food/s**              | 320 L-metal + 160 G, 5 m, **+3 food/s**              | Agriculture I / Agriculture II |
+| Trade hub | 80 L-metal, 60 s, **+0.1 × variety credits/s** | 240 L-metal + 80 G, 3 m, **+0.4 × variety credits/s** | 640 L-metal + 320 G, 10 m, **+1.5 × variety credits/s** | Commerce I / Commerce II    |
+| Lab       | 80 L-metal + 20 L-food, 60 s, **+0.5 science/s** | 240 L-metal + 60 L-food + 80 G, 3 m, **+1.5 science/s** | 640 L-metal + 160 L-food + 320 G, 10 m, **+4 science/s** | Scientific Method / Computing |
+| Barracks  | 100 L-metal, 60 s, **+0.3 military/s**  | 300 L-metal + 100 G, 3 m, **+1 military/s**         | 800 L-metal + 400 G, 10 m, **+3 military/s**        | Drill / Logistics           |
+
+"Variety" in the trade-hub formula = the colony's variety multiplier from
+§4.1 (0.5 to 2.0). A trade-hub-only colony earns 0.05 credits/s from a Tier 1;
+a fully diversified colony earns 0.2 from the same building.
+
+### 5.2 Starting baseline (no buildings)
+
+When a player founds their home colony, the colony starts with a small
+baseline so it isn't paralysed pre-buildings:
+
+- +1 metal/s, +0.5 food/s, +0.3 science/s at the home colony itself.
+- +0.1 credits/s global (so the player has a trickle of credits to pay for
+  their first Tier-2 anything).
+- Outposts (non-home colonies) start with **zero** baseline — you build
+  them up manually.
 
 ## 6. Tech tree
 
-Three branches. Each branch has three tiers. Each tech takes linearly
-more science + time as you go up.
+Five branches, matching the five building types. Each branch evolves from
+basic ("let's dig ore") through mid-tier ("run this better") to exotic
+late-game ("orbital megastructures"). ~3–4 techs per branch; MVP is 16.
 
-### 6.1 Economy
+### 6.1 Mining branch
 
-- **Mining I** — unlocks Mine II. _100 science, 2 min._
-- **Mining II** — unlocks Mine III. _400 science, 8 min._ Prereq: Mining I.
-- **Fusion I** — unlocks Power Plant II. _100 science, 2 min._
-- **Fusion II** — unlocks Power Plant III. _400 science, 8 min._ Prereq: Fusion I.
-- **Automation** — all buildings finish 25% faster. _300 science, 6 min._
-  Prereq: Mining I + Fusion I.
+1. **Mining I** — unlocks Mine II. _100 science, 2 m._
+2. **Mining II** — unlocks Mine III. _400 science, 8 m._ Prereq: Mining I.
+3. **Asteroid Mining** — lets Mines run on gas / molten / toxic worlds
+   (orbital platforms). _600 science + 200 credits, 10 m._ Prereq: Mining II.
 
-### 6.2 Science + population
+### 6.2 Farming branch
 
-- **Scientific Method** — unlocks Research Lab II. _120 science, 2 min._
-- **Computing** — unlocks Research Lab III. _500 science, 10 min._
-  Prereq: Scientific Method.
-- **Better Habitats** — unlocks Habitat II. _150 science, 3 min._
-- **Arcologies** — unlocks Habitat III. _600 science, 12 min._ Prereq: Better Habitats.
-- **Terraforming I** — unlock terraform action: raises hab by +0.2 on one
-  planet over 20 min. _500 science + 200 energy, 10 min research._
-  Prereq: Scientific Method + Fusion I.
+4. **Agriculture I** — unlocks Farm II. _100 science, 2 m._
+5. **Agriculture II** — unlocks Farm III, +25% biome base everywhere.
+   _400 science, 8 m._ Prereq: Agriculture I.
+6. **Bigger Colony Ships** — colony ships carry ×2 colonists. _200 science, 5 m._
+7. **Terraforming I** — unlocks the terraform action (raise a planet's
+   biome by one step over 20 m real time). _500 science + 200 credits, 10 m._
+   Prereq: Agriculture II.
 
-### 6.3 Fleet
+### 6.3 Trading branch
 
-- **Faster Ships I** — ×0.75 travel time. _100 science, 2 min._ *(already in code)*
-- **Bigger Colony Ships** — ×2 colonists per ship. _200 science, 5 min._ *(already in code)*
-- **Faster Ships II** — additional ×0.75 travel. _400 science, 8 min._ Prereq: Faster Ships I.
-- **Sensors I** — see neighbours within 50 ly (v1: just lights up more stars
-  on the map). _80 science, 90s._
-- **Sensors II** — 150 ly, plus reveals fleet ETAs of enemies. _250 science, 5 min._
-  Prereq: Sensors I.
+8. **Commerce I** — unlocks Trade Hub II. _120 science, 2 m._
+9. **Commerce II** — unlocks Trade Hub III. _500 science, 10 m._ Prereq: Commerce I.
+10. **Orbital Docks** — unlocks **Hauler Ship** and therefore
+    inter-colony transport. _700 science + 400 credits, 15 m._ Prereq:
+    Commerce II.
 
-**Total v1: 14 techs** across three branches. Enough for a ~1–3 hour loop to
-get through Tier-2 everything; all-tech-researched should take ~8–12 hours of
-active-ish play plus several days of idle.
+### 6.4 Science branch
+
+11. **Scientific Method** — unlocks Lab II. _150 science, 3 m._
+12. **Computing** — unlocks Lab III. _600 science, 12 m._ Prereq: Scientific Method.
+13. **Automation** — all buildings finish 25% faster. _300 science + 100 credits, 6 m._
+    Prereq: Mining I + Scientific Method.
+
+### 6.5 Warfare branch
+
+14. **Drill** — unlocks Barracks II, unlocks **Faster Ships I** (×0.75
+    travel time). _120 science, 2 m._
+15. **Logistics** — unlocks Barracks III, unlocks **Faster Ships II**
+    (additional ×0.75). _500 science, 10 m._ Prereq: Drill.
+16. **Space Stations** — unlocks the **Space Station** building (treated as
+    a "super-tier" variant that occupies no ground slot — big defensive
+    bonus + passive credits). _800 science + 500 credits, 20 m._
+    Prereq: Logistics + Commerce II.
+
+Techs are per-player (global), even though _research_ is started at a
+colony using that colony's local science stockpile.
 
 ## 7. Ships
 
-v1 ships the **colony ship** only.
+MVP ships:
 
-- **Colony ship** — 200 metal + 100 energy, delivers 1000 colonists (2000
-  with `bigger_colony_ships_1`), one-shot (consumed on arrival).
-- Future: scout, frigate, destroyer (Chunk 10 when combat exists).
+- **Colony ship** — 200 local metal + 100 global credits. Delivers 1000
+  colonists (×2 with Bigger Colony Ships). Consumed on arrival.
 
-Ships exist as a _fleet_ (grouping), not individual units. A fleet is
-`{ ships: Record<ShipId, number>, from, to, departAt, arriveAt }`.
+Deferred (§11):
+
+- **Hauler ship** — moves resources between two colonies. Unlocked by
+  Orbital Docks. Capacity scales with research.
+- **Scout** — reveals sector contents (pairs with sensors tech).
+- **Frigate / destroyer / capital** — combat (Chunk 10).
 
 ## 8. Travel
 
-Base speed: **5 minutes per light-year**. Galaxy coordinates _are_ ly
-(disk radius ~500 ly).
+Unchanged from ADR-005: base speed 5 minutes per light-year. Modifiers:
 
-Modifiers stack multiplicatively:
 - `faster_ships_1` → ×0.75
 - `faster_ships_2` → ×0.75
 
-(Both → 5 × 0.75 × 0.75 ≈ 2.8 min/ly.)
+Galaxy coordinates are light-years (disk radius ~500 ly).
 
-No real-time fleet combat in transit; fleets are invulnerable until arrival.
-(This changes in Chunk 10 — "combat" events on path intersections.)
+## 9. Empire score — GDP
 
-## 9. Goals / single-player victory
+**GDP is the main number.** It is the current **aggregate credits/s
+across all colonies** of a single player. That one value is the score; it
+grows with trade hubs, colony count, building variety, and tech.
 
-No hard win condition; this is an idle game. Progression hooks:
+```
+GDP = sum over colonies of (trade-hub output at that colony)
+```
 
-1. **Milestones** — popup toasts for first colony, first Tier-2 building,
-   first Tier-3 colony, all techs researched, 10 colonies, 100M total pop.
-2. **Empire score** — a single number in the HUD derived from
-   `population + buildings × 100 + techs × 500 + colonies × 1000`. Visible,
-   but not gating anything. "Watch it tick up" is the hook.
-3. **Achievements** (stretch) — permanent badges that survive resets.
+Where each trade hub contributes `rate × variety`, so diverse colonies
+punch way above their building count.
 
-We intentionally avoid "galactic domination" as the win because persistent
-multiplayer exists — one player "winning" makes the game worse for everyone
-else.
+Displayed in the HUD as, e.g., `GDP 12.4 credits/s (748/min)`. Milestones
+fire at 1 / 10 / 100 / 1k / 10k credits/s. No victory condition — the
+number grows forever.
 
-## 10. Balance targets
+Lifetime credits (a running total) is the prestige/bragging-rights stat,
+visible but secondary.
 
-Rough intended session shape, before tuning:
+## 10. Balance targets (first draft)
 
-| Elapsed real time | Expected state                                    |
-| ----------------- | ------------------------------------------------- |
-| 5 minutes         | Home colony founded, 1 mine queued.               |
-| 30 minutes        | Mining I researched, 2–3 Tier-1 buildings done.   |
-| 2 hours           | First colony ship launched to nearest neighbour.  |
-| 1 day             | 3 colonies, Tier-2 unlocks coming online.         |
-| 1 week            | 10+ colonies, full Tier-2, working through Tier-3. |
+Rough intended session shape:
 
-Early-game should reward engagement — builds finish in minutes so "do a
-thing, come back in 10 minutes" is rewarded. Mid-game (Tier-2) shifts to
-"check in a few times a day." Late-game is full idle.
+| Elapsed real time | Expected state                                                  |
+| ----------------- | --------------------------------------------------------------- |
+| 5 minutes         | Home colony, 1 mine + 1 farm queued.                            |
+| 30 minutes        | Mining I or Agriculture I researched, 4–5 Tier-1 buildings.     |
+| 2 hours           | 2 buildings of each type, credits trickle from trade hub.       |
+| 1 day             | 3 colonies, variety bonus at cap on capital, Tier-2 unlocks.    |
+| 1 week            | 10+ colonies, specialization pays off, full Tier-2, Tier-3 work.|
+| ~2 weeks          | Late-game toys: terraforming, space stations, orbital docks.    |
+
+Early-game: minutes-scale. Mid-game: hours-scale. Late-game: full idle.
 
 ## 11. What's explicitly out of scope for the MVP
 
-- Diplomacy, chat, alliances
-- Trade between players
-- Ship combat / destroyable fleets
-- Multi-colony resource logistics (pools are global)
-- Planetary specialization beyond biome
-- Seasons / prestige
-- Loot / drops / RNG rewards
-- Paid anything
+- **Inter-colony transport / hauler ships.** Placeholder: each colony
+  self-sufficient. Design the data model to support per-colony stockpiles
+  _today_ so the transport layer drops in cleanly later.
+- Diplomacy, chat, alliances, trade between players.
+- Ship combat / destroyable fleets (Chunk 10).
+- Building upkeep costs (T3 buildings later need credits/s upkeep).
+- Seasonal prestige, loot, paid anything.
 
-All interesting. All later.
+## 12. Open questions (pinging the doc so we don't lose them)
 
-## 12. Open questions (pinging the doc here so we don't lose them)
-
-- Habitat cap: does population-above-cap decay, or just stop growing? (v1: stop.)
-- What happens if you lose your home? Currently nothing — another colony just
-  becomes the effective capital. Probably fine.
-- Outposts below 0.2 hab: _do_ they still take a colony-ship worth of metal?
-  Yes (same cost, worse outcome — intentional).
-- Do buildings consume energy upkeep, or is energy free once produced?
-  v1: free. Revisit when late-game energy feels too abundant.
+- **Variety formula numbers** — does 0.5/1.0/1.3/1.6/2.0 feel right? Or
+  should single-type colonies be punished harder (e.g. 0.25)?
+- **Starvation penalty** — current: growth halts at zero. Alternative:
+  slow decay toward a "starvation floor." Added stakes, more annoying.
+- **Baseline credits** (+0.1 at home) — is that necessary or does it
+  remove the drive to build a trade hub? Maybe drop and force players to
+  build one to unlock non-metal purchases.
+- **Orbital mining on gas giants** — just mines behaving as normal, or a
+  new building type? Simpler: normal mines with a tech gate.
+- **Building cost scaling by tier of prior level** — currently flat "T2
+  costs 3× T1". Fine, or scale by your current empire size?
+- **Barracks pre-combat** — Military stockpile ticks up with no use.
+  Score contributor only? Or give it something to do now (e.g., reduces
+  colony-ship loss on hostile planets, which we can define later)?

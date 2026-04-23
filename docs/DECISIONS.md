@@ -169,6 +169,125 @@ pnpm version mismatches again.
 
 ---
 
+## ADR-011 · Five building types, three tiers each
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+Buildings are **mining / farming / trading / science / warfare**, three
+tiers each. Each type produces exactly one resource; higher tiers need
+prereq research _and_ a prior-tier building at the same colony.
+
+**Alternative considered:** my prior 4-type draft (mine / power / lab /
+habitat). Rejected in favour of a cleaner 1-to-1 mapping between building
+type and resource, plus the thematic handle of "farming" and "warfare" as
+distinct branches.
+
+**Revisit when:** playtest shows the variety bonus (§4.1) isn't landing
+— if colonies feel like they should specialize rather than diversify, the
+whole "variety fills jobs" mechanic gets rethought.
+
+See [`GAMEPLAY.md §5`](./GAMEPLAY.md).
+
+---
+
+## ADR-012 · Credits are the only global resource; everything else is per-colony
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+Metal, Food, Science, Military — all **per-colony** accumulators. Only
+Credits are a single empire-wide pool. Buildings and research started
+_at_ a colony consume that colony's local stockpile. Ships launched from
+a colony consume that colony's metal plus global credits.
+
+**Alternative considered:** keeping a single global pool for simplicity
+(the SP-1 first-pass I'd drafted). Rejected — the per-colony model is a
+core part of the gameplay fantasy: colonies feel like real places that
+have or don't have stuff.
+
+**Implication:** the `player_resources` table becomes `colony_resources`
+(or resources inline in `colonies`). The single-global row is only for
+credits. Offline state shape changes too. The Drizzle migration and the
+`OfflineApi` need to be rewritten before SP-1 is playable.
+
+**Revisit when:** the data model can't carry transport semantics cleanly.
+At that point move resources to a per-(colony, resource-type) row so
+trade-route deltas don't rewrite entire colony accumulator rows.
+
+See [`GAMEPLAY.md §3`](./GAMEPLAY.md).
+
+---
+
+## ADR-013 · Population cap is multi-factor (biome × tech × variety); food gates growth
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+```
+cap = biomeBase × techMultiplier × varietyBonus
+```
+
+- `biomeBase` depends on planet type (molten 500 → earthlike 25k).
+- `techMultiplier` grows with habitat techs (1.0 → 5.0 at late-game megacities).
+- `varietyBonus` rewards having multiple building _types_ at a colony
+  (0.5 at 1 type, 2.0 at all 5 types — "need variety to fill jobs").
+
+Food is separate: each colony's pop consumes `pop / 10 000` food/s, and
+growth scales by `clamp(produced/consumed, 0, 1.5)`. Starvation halts
+growth; MVP leaves decay out.
+
+**Alternative considered:** a single scalar cap per biome, with tech
+bumps only. Rejected — "need variety to fill jobs" is a strong gameplay
+hook the user explicitly called for, and it makes diverse colonies
+strategically different from specialized ones.
+
+**Revisit when:** the variety bonus feels gamey (players trivially max it
+by building one of each and forgetting) — move variety onto the
+_per-building-type count_ rather than just presence.
+
+See [`GAMEPLAY.md §4`](./GAMEPLAY.md).
+
+---
+
+## ADR-014 · Empire score is GDP (aggregate credits/s)
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+The headline score is **current empire-wide credits/s**, summed across
+every trade hub on every colony. Lifetime credits (total earned) exists
+too, but GDP is the main "watch it tick up" number.
+
+No victory condition — the game is open-ended idle. Milestones fire at
+GDP thresholds (1, 10, 100, 1k, 10k credits/s).
+
+**Alternative considered:** a weighted formula mixing population,
+buildings, techs, colonies. Rejected as a "grab-bag" number that doesn't
+really represent anything; GDP is legible and aligns with the fantasy
+("build a financial empire").
+
+**Revisit when:** GDP is trivially maxed by stacking trade hubs and
+ignoring everything else. Rebalance via variety multiplier, or tie GDP
+to a trailing average so spikes don't dominate.
+
+See [`GAMEPLAY.md §9`](./GAMEPLAY.md).
+
+---
+
+## ADR-015 · Tech tree evolves five thematic branches into late-game megatech
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+One branch per building type. Each branch has ~3–4 techs that go from
+"basic building tier-up" through mid-branch utility (reduced build time,
++caps, etc.) to **late-game exotic** (terraforming, orbital docks /
+hauler ships, space stations, asteroid mining).
+
+This guarantees every branch has a reason to be researched end-to-end
+rather than players neglecting whole trees.
+
+**Alternative considered:** unstructured tech web. Rejected — harder to
+balance and harder for players to form a plan.
+
+**Revisit when:** any branch is consistently skipped by players (the data
+will tell us). Rebalance the skipped branch's late-game rewards.
+
+See [`GAMEPLAY.md §6`](./GAMEPLAY.md).
+
+---
+
 ## Template for new ADRs
 
 ```markdown
