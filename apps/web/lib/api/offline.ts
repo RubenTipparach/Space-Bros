@@ -2,6 +2,7 @@ import {
   COLONY_SHIP_COST,
   HABITABLE_MIN_HABITABILITY,
   HOME_COLONY_RESOURCE_RATES,
+  PER_COLONY_RESOURCES,
   TECHS,
   accumulatorAt,
   colonistsForShip,
@@ -11,6 +12,7 @@ import {
   travelEstimate,
   type Biome,
   type Galaxy,
+  type PerColonyResource,
   type ResourceCost,
 } from "@space-bros/shared";
 import type {
@@ -21,17 +23,18 @@ import type {
 } from "./types";
 
 /**
- * Browser-only implementation. Mirrors the server routes:
- *   - Same validation rules (hab >= 0.2, no double-colonize, etc.)
- *   - Same event-queue model (events have fire_at, drained on each read)
- *   - Same pure formulas (accumulator math, travel time, colonist count)
+ * Browser-only implementation. Mirrors the server routes after ADR-012
+ * (per-colony stockpiles + global credits):
+ *   - pickHome: hab >= 0.2, only once, seeds home rates + global credits
+ *   - startResearch: deducts science from a chosen colony (default: home)
+ *   - launchColony: deducts source-colony metal + global credits
  *
- * State lives in a single localStorage key. The key is versioned so
- * we can break shape freely — old saves get discarded with a console
- * warning rather than crashing the app.
+ * Each call drains overdue events first via a switch-per-kind that mirrors
+ * lib/db/tick.ts applyEvent. State is versioned — older saves get
+ * discarded with a console warning.
  */
 
-const STORAGE_KEY = "sb_offline_v1";
+const STORAGE_KEY = "sb_offline_v2";
 const GALAXY_SEED =
   (process.env.NEXT_PUBLIC_GALAXY_SEED as string | undefined) ?? "space-bros-offline";
 const GALAXY_STAR_COUNT = Number.parseInt(
@@ -53,6 +56,12 @@ interface OfflineEvent {
   payload: unknown;
 }
 
+interface OfflineAccumulator {
+  value: number;
+  rate: number;
+  t0: number;
+}
+
 interface OfflineColony {
   id: string;
   planetId: string;
@@ -61,6 +70,12 @@ interface OfflineColony {
   populationValue: number;
   populationRate: number;
   populationT0: number;
+  populationCap: number | null;
+  buildings: Record<string, number>;
+  metal: OfflineAccumulator;
+  food: OfflineAccumulator;
+  science: OfflineAccumulator;
+  military: OfflineAccumulator;
 }
 
 interface OfflineFleet {
@@ -72,27 +87,15 @@ interface OfflineFleet {
   ships: Record<string, number>;
 }
 
-interface OfflineResources {
-  metalValue: number;
-  metalRate: number;
-  metalT0: number;
-  energyValue: number;
-  energyRate: number;
-  energyT0: number;
-  scienceValue: number;
-  scienceRate: number;
-  scienceT0: number;
-}
-
 interface OfflineState {
-  version: 1;
+  version: 2;
   player: {
     id: string;
     displayName: string;
     homeColonyId: string | null;
     lastSimAt: number;
   };
-  resources: OfflineResources | null;
+  credits: OfflineAccumulator;
   research: string[];
   colonies: Record<string, OfflineColony>;
   fleets: Record<string, OfflineFleet>;
@@ -105,16 +108,21 @@ function newId(prefix: string): string {
   return `${prefix}_${rnd}`;
 }
 
+function zeroAccumulator(now: number): OfflineAccumulator {
+  return { value: 0, rate: 0, t0: now };
+}
+
 function initialState(): OfflineState {
+  const now = Date.now();
   return {
-    version: 1,
+    version: 2,
     player: {
       id: newId("offline"),
       displayName: "Offline Commander",
       homeColonyId: null,
-      lastSimAt: Date.now(),
+      lastSimAt: now,
     },
-    resources: null,
+    credits: zeroAccumulator(now),
     research: [],
     colonies: {},
     fleets: {},
@@ -129,10 +137,10 @@ function loadState(): OfflineState {
   if (!raw) return initialState();
   try {
     const parsed = JSON.parse(raw) as Partial<OfflineState>;
-    if (parsed.version !== 1) throw new Error("version mismatch");
+    if (parsed.version !== 2) throw new Error("version mismatch");
     return parsed as OfflineState;
   } catch (err) {
-    console.warn("offline: discarding corrupt save", err);
+    console.warn("offline: discarding incompatible save", err);
     return initialState();
   }
 }
@@ -166,11 +174,7 @@ function drain(state: OfflineState, now: number): OfflineState {
 
   due.sort((a, b) => a.fireAt - b.fireAt);
   let s: OfflineState = { ...state, events: rest };
-
-  for (const event of due) {
-    s = applyOfflineEvent(s, event);
-  }
-
+  for (const event of due) s = applyOfflineEvent(s, event);
   return { ...s, player: { ...s.player, lastSimAt: now } };
 }
 
@@ -222,6 +226,12 @@ function applyOfflineEvent(state: OfflineState, event: OfflineEvent): OfflineSta
         populationValue: p.colonists,
         populationRate: populationRateForBiome(planetHabitability(p.planetId)),
         populationT0: event.fireAt,
+        populationCap: null,
+        buildings: {},
+        metal: zeroAccumulator(event.fireAt),
+        food: zeroAccumulator(event.fireAt),
+        science: zeroAccumulator(event.fireAt),
+        military: zeroAccumulator(event.fireAt),
       };
       return {
         ...state,
@@ -236,8 +246,8 @@ function applyOfflineEvent(state: OfflineState, event: OfflineEvent): OfflineSta
     case "building_complete":
     case "terraform_complete":
     case "combat":
-      // Not exercised by 6a/6b orders in offline mode yet. Events of
-      // these kinds get consumed but have no effect until later chunks.
+      // Consumed but no-op. SP-1b wires up building_complete; Chunk 10
+      // wires up combat; SP-3 wires up terraform_complete.
       return state;
   }
 }
@@ -251,58 +261,101 @@ function planetHabitability(planetId: string): number {
   return planet?.habitability ?? 0;
 }
 
-// ---- Resource accounting (mirrors lib/db/orders.ts) -----------------------
+// ---- Resource accounting (mirrors lib/db/orders.ts deductCost) -----------
 
-interface ResourceSnapshot {
+interface ColonySnapshot {
   metal: number;
-  energy: number;
+  food: number;
   science: number;
+  military: number;
   now: number;
 }
 
-function snapshotResources(res: OfflineResources, now: number): ResourceSnapshot {
+function snapshotColony(colony: OfflineColony, now: number): ColonySnapshot {
   return {
-    metal: accumulatorAt({ value: res.metalValue, rate: res.metalRate, t0: res.metalT0 }, now),
-    energy: accumulatorAt({ value: res.energyValue, rate: res.energyRate, t0: res.energyT0 }, now),
-    science: accumulatorAt(
-      { value: res.scienceValue, rate: res.scienceRate, t0: res.scienceT0 },
-      now,
-    ),
+    metal: accumulatorAt(colony.metal, now),
+    food: accumulatorAt(colony.food, now),
+    science: accumulatorAt(colony.science, now),
+    military: accumulatorAt(colony.military, now),
     now,
   };
-}
-
-function deduct(
-  res: OfflineResources,
-  snap: ResourceSnapshot,
-  cost: ResourceCost,
-): OfflineResources {
-  return {
-    metalValue: snap.metal - (cost.metal ?? 0),
-    metalRate: res.metalRate,
-    metalT0: snap.now,
-    energyValue: snap.energy - (cost.energy ?? 0),
-    energyRate: res.energyRate,
-    energyT0: snap.now,
-    scienceValue: snap.science - (cost.science ?? 0),
-    scienceRate: res.scienceRate,
-    scienceT0: snap.now,
-  };
-}
-
-function canAfford(snap: ResourceSnapshot, cost: ResourceCost): boolean {
-  return (
-    snap.metal >= (cost.metal ?? 0) &&
-    snap.energy >= (cost.energy ?? 0) &&
-    snap.science >= (cost.science ?? 0)
-  );
 }
 
 function err(code: string, message: string) {
   return { ok: false as const, error: { error: code, message } };
 }
 
+/**
+ * Apply a `ResourceCost` to a colony + global credits, in place.
+ * Returns the patched objects; caller must save the new state.
+ */
+function applyDeduction(
+  state: OfflineState,
+  colonyId: string | null,
+  cost: ResourceCost,
+  now: number,
+): { state: OfflineState } | { err: { ok: false; error: { error: string; message: string } } } {
+  let creditsAcc = state.credits;
+  if ((cost.credits ?? 0) > 0) {
+    const balance = accumulatorAt(creditsAcc, now);
+    if (balance < (cost.credits ?? 0)) {
+      return { err: err("insufficient_credits", `Need ${cost.credits} credits.`) };
+    }
+    creditsAcc = { ...creditsAcc, value: balance - (cost.credits ?? 0), t0: now };
+  }
+
+  let colonies = state.colonies;
+  const hasPerColony = PER_COLONY_RESOURCES.some((k) => (cost[k] ?? 0) > 0);
+  if (hasPerColony) {
+    if (!colonyId) return { err: err("colony_required", "This cost needs a source colony.") };
+    const colony = state.colonies[colonyId];
+    if (!colony) return { err: err("colony_not_found", "Colony missing.") };
+    const snap = snapshotColony(colony, now);
+    const shortfalls: string[] = [];
+    for (const r of PER_COLONY_RESOURCES) {
+      const need = cost[r] ?? 0;
+      if (need > 0 && snap[r] < need) {
+        shortfalls.push(`${need} ${r}`);
+      }
+    }
+    if (shortfalls.length > 0) {
+      return { err: err("insufficient_resources", `Colony short on: ${shortfalls.join(", ")}.`) };
+    }
+    const next: OfflineColony = { ...colony };
+    for (const r of PER_COLONY_RESOURCES) {
+      const need = cost[r] ?? 0;
+      if (need <= 0) continue;
+      next[r] = { ...colony[r], value: snap[r] - need, t0: now };
+    }
+    colonies = { ...state.colonies, [colonyId]: next };
+  }
+
+  return { state: { ...state, credits: creditsAcc, colonies } };
+}
+
+function findPending(state: OfflineState, kind: OfflineEvent["kind"]): OfflineEvent | null {
+  return state.events.find((e) => e.kind === kind) ?? null;
+}
+
 // ---- ServerApi implementation ---------------------------------------------
+
+function colonyView(c: OfflineColony) {
+  return {
+    id: c.id,
+    planetId: c.planetId,
+    biome: c.biome,
+    foundedAt: c.foundedAt,
+    populationValue: c.populationValue,
+    populationRate: c.populationRate,
+    populationT0: c.populationT0,
+    populationCap: c.populationCap,
+    buildings: c.buildings,
+    metal: c.metal,
+    food: c.food,
+    science: c.science,
+    military: c.military,
+  };
+}
 
 export class OfflineApi implements ServerApi {
   readonly mode = "offline" as const;
@@ -316,32 +369,13 @@ export class OfflineApi implements ServerApi {
       ? state.colonies[state.player.homeColonyId] ?? null
       : null;
 
-    const resources = state.resources
+    const pending = findPending(state, "research_complete");
+    const pendingResearchPayload = pending
       ? {
-          metal: {
-            value: state.resources.metalValue,
-            rate: state.resources.metalRate,
-            t0: state.resources.metalT0,
-          },
-          energy: {
-            value: state.resources.energyValue,
-            rate: state.resources.energyRate,
-            t0: state.resources.energyT0,
-          },
-          science: {
-            value: state.resources.scienceValue,
-            rate: state.resources.scienceRate,
-            t0: state.resources.scienceT0,
-          },
-        }
-      : null;
-
-    const pendingResearch = findPending(state, "research_complete");
-    const pendingResearchPayload = pendingResearch
-      ? {
-          techId: (pendingResearch.payload as { techId: string }).techId,
-          eventId: pendingResearch.id,
-          fireAt: pendingResearch.fireAt,
+          techId: (pending.payload as { techId: string }).techId,
+          eventId: pending.id,
+          fireAt: pending.fireAt,
+          colonyId: ((pending.payload as { colonyId?: string }).colonyId) ?? null,
         }
       : null;
 
@@ -356,27 +390,11 @@ export class OfflineApi implements ServerApi {
           isDevUser: false,
           isOffline: true,
         },
-        homeColony: homeColony
-          ? {
-              id: homeColony.id,
-              planetId: homeColony.planetId,
-              biome: homeColony.biome,
-              populationValue: homeColony.populationValue,
-              populationRate: homeColony.populationRate,
-              populationT0: homeColony.populationT0,
-            }
-          : null,
-        resources,
+        homeColony: homeColony ? colonyView(homeColony) : null,
+        credits: state.credits,
         research: state.research,
         pendingResearch: pendingResearchPayload,
-        colonies: Object.values(state.colonies).map((c) => ({
-          id: c.id,
-          planetId: c.planetId,
-          biome: c.biome,
-          populationValue: c.populationValue,
-          populationRate: c.populationRate,
-          populationT0: c.populationT0,
-        })),
+        colonies: Object.values(state.colonies).map(colonyView),
         fleets: Object.values(state.fleets).map((f) => ({
           id: f.id,
           fromStarId: f.fromStarId,
@@ -411,11 +429,12 @@ export class OfflineApi implements ServerApi {
 
     const planetId = `${starId}:${planetIndex}`;
     const colonyId = `${state.player.id}:${planetId}`;
-    const rate = populationRateForBiome(planet.habitability);
+    const r = HOME_COLONY_RESOURCE_RATES;
 
     state = {
       ...state,
       player: { ...state.player, homeColonyId: colonyId },
+      credits: { ...state.credits, value: accumulatorAt(state.credits, now), rate: r.creditsPerSecond, t0: now },
       colonies: {
         ...state.colonies,
         [colonyId]: {
@@ -424,35 +443,32 @@ export class OfflineApi implements ServerApi {
           biome: planet.biome,
           foundedAt: now,
           populationValue: 1_000,
-          populationRate: rate,
+          populationRate: populationRateForBiome(planet.habitability),
           populationT0: now,
+          populationCap: null,
+          buildings: {},
+          metal: { value: 0, rate: r.metalPerSecond, t0: now },
+          food: { value: 0, rate: r.foodPerSecond, t0: now },
+          science: { value: 0, rate: r.sciencePerSecond, t0: now },
+          military: { value: 0, rate: r.militaryPerSecond, t0: now },
         },
-      },
-      resources: {
-        metalValue: 0,
-        metalRate: HOME_COLONY_RESOURCE_RATES.metalPerSecond,
-        metalT0: now,
-        energyValue: 0,
-        energyRate: HOME_COLONY_RESOURCE_RATES.energyPerSecond,
-        energyT0: now,
-        scienceValue: 0,
-        scienceRate: HOME_COLONY_RESOURCE_RATES.sciencePerSecond,
-        scienceT0: now,
       },
     };
     saveState(state);
     return { ok: true };
   }
 
-  async startResearch(techId: string): Promise<ApiResult> {
+  async startResearch(techId: string, requestedColonyId?: string): Promise<ApiResult> {
     const tech = TECHS[techId];
     if (!tech) return err("unknown_tech", `Unknown tech: ${techId}`);
 
     const now = Date.now();
     let state = drain(loadState(), now);
 
-    if (!state.resources) {
-      return err("no_resources", "Pick a home planet first.");
+    const colonyId =
+      requestedColonyId ?? state.player.homeColonyId ?? null;
+    if (!colonyId || !state.colonies[colonyId]) {
+      return err("no_home_colony", "Pick a home planet before researching.");
     }
     if (state.research.includes(techId)) {
       return err("already_researched", "You already have that tech.");
@@ -465,24 +481,23 @@ export class OfflineApi implements ServerApi {
       return err("already_researching", "You are already researching something.");
     }
 
-    const snap = snapshotResources(state.resources, now);
-    if (!canAfford(snap, tech.cost)) {
-      return err("insufficient_resources", "Not enough resources.");
-    }
+    const deducted = applyDeduction(state, colonyId, tech.cost, now);
+    if ("err" in deducted) return deducted.err;
+    state = deducted.state;
 
     const fireAt = now + tech.durationSeconds * 1000;
-    const event: OfflineEvent = {
-      id: newId("evt"),
-      kind: "research_complete",
-      ownerId: state.player.id,
-      fireAt,
-      payload: { techId },
-    };
-
     state = {
       ...state,
-      resources: deduct(state.resources, snap, tech.cost),
-      events: [...state.events, event],
+      events: [
+        ...state.events,
+        {
+          id: newId("evt"),
+          kind: "research_complete",
+          ownerId: state.player.id,
+          fireAt,
+          payload: { techId, colonyId },
+        },
+      ],
     };
     saveState(state);
     return { ok: true };
@@ -495,9 +510,6 @@ export class OfflineApi implements ServerApi {
 
     const now = Date.now();
     let state = drain(loadState(), now);
-    if (!state.resources) {
-      return err("no_resources", "Pick a home planet first.");
-    }
 
     const galaxy = getGalaxy();
     const fromStar = galaxy.stars[fromStarId];
@@ -506,11 +518,11 @@ export class OfflineApi implements ServerApi {
     const toPlanet = toStar.planets[toPlanetIndex];
     if (!toPlanet) return err("planet_not_found", "Planet not found.");
 
-    // Own the source?
-    const ownsFrom = Object.values(state.colonies).some((c) =>
+    // Find a colony of ours at the source star.
+    const sourceColony = Object.values(state.colonies).find((c) =>
       c.planetId.startsWith(`${fromStarId}:`),
     );
-    if (!ownsFrom) {
+    if (!sourceColony) {
       return err("no_source_colony", "You don't have a colony at the source star.");
     }
 
@@ -519,10 +531,9 @@ export class OfflineApi implements ServerApi {
       return err("colony_exists", "You already have a colony there.");
     }
 
-    const snap = snapshotResources(state.resources, now);
-    if (!canAfford(snap, COLONY_SHIP_COST)) {
-      return err("insufficient_resources", "Need 200 metal + 100 energy.");
-    }
+    const deducted = applyDeduction(state, sourceColony.id, COLONY_SHIP_COST, now);
+    if ("err" in deducted) return deducted.err;
+    state = deducted.state;
 
     const techs = new Set(state.research);
     const distance = distanceLy(fromStar, toStar);
@@ -534,7 +545,6 @@ export class OfflineApi implements ServerApi {
 
     state = {
       ...state,
-      resources: deduct(state.resources, snap, COLONY_SHIP_COST),
       fleets: {
         ...state.fleets,
         [fleetId]: {
@@ -567,12 +577,14 @@ export class OfflineApi implements ServerApi {
   }
 }
 
-function findPending(state: OfflineState, kind: OfflineEvent["kind"]): OfflineEvent | null {
-  return state.events.find((e) => e.kind === kind) ?? null;
-}
-
 /** Reset the offline save. Useful for wiring a "new game" button later. */
 export function resetOfflineState(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(STORAGE_KEY);
+  // also clear the v1 key from the previous schema if present
+  window.localStorage.removeItem("sb_offline_v1");
 }
+
+// Reference unused imports defensively so tree-shaking doesn't surprise us.
+void PER_COLONY_RESOURCES;
+type _Unused = PerColonyResource;

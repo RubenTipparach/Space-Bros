@@ -45,12 +45,16 @@ export class HttpApi implements ServerApi {
     return { ok: true };
   }
 
-  async startResearch(techId: string): Promise<ApiResult> {
+  async startResearch(techId: string, colonyId?: string): Promise<ApiResult> {
     const r = await fetch("/api/orders/research", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ orderId: newOrderId(), techId }),
+      body: JSON.stringify({
+        orderId: newOrderId(),
+        techId,
+        ...(colonyId ? { colonyId } : {}),
+      }),
     });
     if (!r.ok) return { ok: false, error: await parseError(r) };
     return { ok: true };

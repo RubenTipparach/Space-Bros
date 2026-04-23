@@ -5,9 +5,9 @@ import {
   getOrCreatePlayer,
   getPendingResearch,
   getPlayerColonies,
+  getPlayerCredits,
   getPlayerFleets,
   getPlayerHomeColony,
-  getPlayerResources,
 } from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
@@ -18,9 +18,9 @@ export async function GET() {
     const userId = await getCurrentUserId();
     const player = await getOrCreatePlayer(userId);
 
-    const [homeColony, resources, research, pendingResearch, colonies, fleets] = await Promise.all([
+    const [homeColony, credits, research, pendingResearch, colonies, fleets] = await Promise.all([
       player.homeColonyId ? getPlayerHomeColony(userId) : Promise.resolve(null),
-      getPlayerResources(userId),
+      getPlayerCredits(userId),
       getCompletedResearch(userId),
       getPendingResearch(userId),
       getPlayerColonies(userId),
@@ -36,7 +36,7 @@ export async function GET() {
         isDevUser: isDevUser(player.id),
       },
       homeColony,
-      resources,
+      credits,
       research,
       pendingResearch,
       colonies,

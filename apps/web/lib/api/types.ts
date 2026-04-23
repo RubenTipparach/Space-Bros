@@ -1,6 +1,11 @@
 /**
  * Shared types for the API adapter layer. Defined once so the HTTP
  * and offline implementations can't drift.
+ *
+ * Resource model (ADR-012):
+ *   - `credits` is global to the empire.
+ *   - metal / food / science / military are per-colony — each `ColonySummary`
+ *     carries its own four accumulators.
  */
 
 export interface PlayerSummary {
@@ -12,40 +17,44 @@ export interface PlayerSummary {
   isOffline?: boolean;
 }
 
-export interface HomeColony {
-  id: string;
-  planetId: string;
-  biome: string;
-  populationValue: number;
-  populationRate: number;
-  populationT0: number;
-}
-
 export interface AccumulatorView {
   value: number;
   rate: number;
   t0: number;
 }
 
-export interface ResourcesView {
+export interface ColonyResources {
   metal: AccumulatorView;
-  energy: AccumulatorView;
+  food: AccumulatorView;
   science: AccumulatorView;
+  military: AccumulatorView;
 }
 
-export interface PendingResearch {
-  techId: string;
-  eventId: string;
-  fireAt: number;
-}
-
-export interface ColonySummary {
+export interface HomeColony extends ColonyResources {
   id: string;
   planetId: string;
   biome: string;
   populationValue: number;
   populationRate: number;
   populationT0: number;
+}
+
+export interface ColonySummary extends ColonyResources {
+  id: string;
+  planetId: string;
+  biome: string;
+  populationValue: number;
+  populationRate: number;
+  populationT0: number;
+  populationCap: number | null;
+  buildings: Record<string, number>;
+}
+
+export interface PendingResearch {
+  techId: string;
+  eventId: string;
+  fireAt: number;
+  colonyId: string | null;
 }
 
 export interface FleetSummary {
@@ -60,7 +69,8 @@ export interface FleetSummary {
 export interface MeResponse {
   player: PlayerSummary;
   homeColony: HomeColony | null;
-  resources: ResourcesView | null;
+  /** Empire-wide credits accumulator. */
+  credits: AccumulatorView | null;
   research: string[];
   pendingResearch: PendingResearch | null;
   colonies: ColonySummary[];
@@ -87,6 +97,7 @@ export interface ServerApi {
   readonly mode: "http" | "offline";
   getMe(): Promise<ApiResult<MeResponse>>;
   pickHome(starId: number, planetIndex: number): Promise<ApiResult>;
-  startResearch(techId: string): Promise<ApiResult>;
+  /** colonyId is optional — server defaults to the player's home colony. */
+  startResearch(techId: string, colonyId?: string): Promise<ApiResult>;
   launchColony(args: LaunchArgs): Promise<ApiResult>;
 }
