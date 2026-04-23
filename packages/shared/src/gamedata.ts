@@ -80,3 +80,84 @@ export const HOME_COLONY_RESOURCE_RATES = {
   energyPerSecond: 0.5,
   sciencePerSecond: 0.5,
 } as const;
+
+// ---- Travel + colonization ------------------------------------------------
+
+/**
+ * Galaxy coordinates are light-years. Base travel speed is a constant
+ * minutes-per-ly; research modifies it multiplicatively. 5 min/ly at
+ * base gives: nearest-neighbor hops in minutes, sector trips in an
+ * hour or two, cross-galaxy expansion in days. Tune freely.
+ */
+export const BASE_MINUTES_PER_LIGHT_YEAR = 5;
+
+/** Colony ship cost paid at launch. */
+export const COLONY_SHIP_COST: ResourceCost = { metal: 200, energy: 100 };
+
+/** Base colonists delivered per colony ship. */
+export const BASE_COLONISTS = 1000;
+
+/** Speed multipliers applied by research (stacked multiplicatively). */
+export const SPEED_MODIFIERS: Record<string, number> = {
+  faster_ships_1: 0.75,
+};
+
+/** Colonist multipliers applied by research (stacked multiplicatively). */
+export const COLONIST_MODIFIERS: Record<string, number> = {
+  bigger_colony_ships_1: 2,
+};
+
+export interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export function distanceLy(a: Vec3, b: Vec3): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+export interface TravelEstimate {
+  distanceLy: number;
+  durationMs: number;
+  multiplier: number;
+}
+
+export function travelEstimate(
+  distLy: number,
+  completedTechs: ReadonlySet<string>,
+): TravelEstimate {
+  let multiplier = 1.0;
+  for (const [techId, mod] of Object.entries(SPEED_MODIFIERS)) {
+    if (completedTechs.has(techId)) multiplier *= mod;
+  }
+  const minutes = distLy * BASE_MINUTES_PER_LIGHT_YEAR * multiplier;
+  return {
+    distanceLy: distLy,
+    durationMs: Math.max(1000, Math.round(minutes * 60_000)),
+    multiplier,
+  };
+}
+
+export function colonistsForShip(completedTechs: ReadonlySet<string>): number {
+  let n = BASE_COLONISTS;
+  for (const [techId, mod] of Object.entries(COLONIST_MODIFIERS)) {
+    if (completedTechs.has(techId)) n *= mod;
+  }
+  return n;
+}
+
+/**
+ * Habitable planet: supports a standard colony with population growth.
+ * Below this threshold a colony still founds but grows at 0 (outpost).
+ */
+export const HABITABLE_MIN_HABITABILITY = 0.2;
+
+export function populationRateForBiome(habitability: number): number {
+  if (habitability < HABITABLE_MIN_HABITABILITY) return 0;
+  // Gentle curve: a perfect earthlike grows ~5× an edge-of-hab tundra.
+  return 0.05 * Math.max(0, habitability);
+}

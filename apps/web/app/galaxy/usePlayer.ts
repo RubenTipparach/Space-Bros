@@ -37,12 +37,32 @@ export interface PendingResearch {
   fireAt: number;
 }
 
+export interface ColonySummary {
+  id: string;
+  planetId: string;
+  biome: string;
+  populationValue: number;
+  populationRate: number;
+  populationT0: number;
+}
+
+export interface FleetSummary {
+  id: string;
+  fromStarId: number;
+  toStarId: number;
+  departAt: number;
+  arriveAt: number;
+  ships: Record<string, number>;
+}
+
 export interface MeResponse {
   player: PlayerSummary;
   homeColony: HomeColony | null;
   resources: ResourcesView | null;
   research: string[];
   pendingResearch: PendingResearch | null;
+  colonies: ColonySummary[];
+  fleets: FleetSummary[];
   serverTime: number;
 }
 
@@ -61,6 +81,11 @@ export interface PlayerState {
     planetIndex: number,
   ) => Promise<{ ok: true } | { ok: false; error: ApiError }>;
   startResearch: (techId: string) => Promise<{ ok: true } | { ok: false; error: ApiError }>;
+  launchColony: (args: {
+    fromStarId: number;
+    toStarId: number;
+    toPlanetIndex: number;
+  }) => Promise<{ ok: true } | { ok: false; error: ApiError }>;
 }
 
 const DEFAULT_POLL_MS = 15_000;
@@ -139,6 +164,27 @@ export function usePlayer(pollMs: number = DEFAULT_POLL_MS): PlayerState {
     return { ok: true };
   }, [refresh]);
 
+  const launchColony = useCallback<PlayerState["launchColony"]>(
+    async ({ fromStarId, toStarId, toPlanetIndex }) => {
+      const r = await fetch("/api/orders/launch", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderId: newOrderId(), fromStarId, toStarId, toPlanetIndex }),
+      });
+      if (!r.ok) {
+        const body = (await r.json().catch(() => ({}))) as Partial<ApiError>;
+        return {
+          ok: false,
+          error: { error: body.error ?? `http_${r.status}`, message: body.message },
+        };
+      }
+      await refresh();
+      return { ok: true };
+    },
+    [refresh],
+  );
+
   useEffect(() => {
     mounted.current = true;
     refresh();
@@ -156,5 +202,5 @@ export function usePlayer(pollMs: number = DEFAULT_POLL_MS): PlayerState {
     };
   }, [refresh, pollMs]);
 
-  return { data, error, loading, refresh, pickHome, startResearch };
+  return { data, error, loading, refresh, pickHome, startResearch, launchColony };
 }

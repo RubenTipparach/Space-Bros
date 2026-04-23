@@ -63,7 +63,8 @@ mechanics that make this work.
 - [x] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
 - [ ] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
 - [x] **Chunk 6a** — Order API: start research (idempotent, deducts resources, schedules event).
-- [ ] **Chunk 6b** — Order API: build / launch / terraform.
+- [x] **Chunk 6b** — Order API: launch colony ship (travel at 5 min/ly, schedules `colony_founded`).
+- [ ] **Chunk 6c** — Order API: buildings, terraforming (needs research tree).
 - [ ] **Chunk 7** — Realtime (SSE) + optimistic UI reconciliation.
 - [ ] **Chunk 8** — Research & terraforming trees (data-driven).
 - [ ] **Chunk 9** — Multi-player interactions: outposts on shared planets,

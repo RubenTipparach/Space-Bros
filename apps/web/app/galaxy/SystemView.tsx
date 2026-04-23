@@ -17,9 +17,24 @@ interface Props {
   onClose: () => void;
   canPickHome: boolean;
   pickHome: PlayerState["pickHome"];
+  launchColony: PlayerState["launchColony"];
+  hasHome: boolean;
+  homeStarId: number | null;
+  ownedPlanetIds: Set<string>;
+  inFlightPlanetIds: Set<string>;
 }
 
-export function SystemView({ star, onClose, canPickHome, pickHome }: Props) {
+export function SystemView({
+  star,
+  onClose,
+  canPickHome,
+  pickHome,
+  launchColony,
+  hasHome,
+  homeStarId,
+  ownedPlanetIds,
+  inFlightPlanetIds,
+}: Props) {
   const starColor = rgbToCss(SPECTRAL_COLORS[star.spectralClass]);
   const maxOrbit = star.planets.reduce((m, p) => Math.max(m, p.orbitAu), 1);
   const svgSize = 320;
@@ -28,16 +43,29 @@ export function SystemView({ star, onClose, canPickHome, pickHome }: Props) {
   const orbitScale = (svgSize / 2 - 20) / maxOrbit;
 
   const [pending, setPending] = useState<string | null>(null);
-  const [pickError, setPickError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const canLaunch = hasHome && homeStarId !== null && homeStarId !== star.id;
 
   const handlePick = async (planet: Planet) => {
     setPending(planet.id);
-    setPickError(null);
+    setActionError(null);
     const res = await pickHome(star.id, planet.index);
     setPending(null);
-    if (!res.ok) {
-      setPickError(res.error.message ?? res.error.error);
-    }
+    if (!res.ok) setActionError(res.error.message ?? res.error.error);
+  };
+
+  const handleLaunch = async (planet: Planet) => {
+    if (homeStarId === null) return;
+    setPending(planet.id);
+    setActionError(null);
+    const res = await launchColony({
+      fromStarId: homeStarId,
+      toStarId: star.id,
+      toPlanetIndex: planet.index,
+    });
+    setPending(null);
+    if (!res.ok) setActionError(res.error.message ?? res.error.error);
   };
 
   return (
@@ -84,8 +112,12 @@ export function SystemView({ star, onClose, canPickHome, pickHome }: Props) {
       <ul className="planet-list">
         {star.planets.length === 0 ? <li className="muted">No planets.</li> : null}
         {star.planets.map((p) => {
+          const planetId = `${star.id}:${p.index}`;
           const habPct = Math.round(p.habitability * 100);
-          const canPick = canPickHome && p.habitability >= 0.2;
+          const isOwn = ownedPlanetIds.has(planetId);
+          const isInFlight = inFlightPlanetIds.has(planetId);
+          const pickable = canPickHome && p.habitability >= 0.2;
+          const launchable = canLaunch && !isOwn && !isInFlight && p.habitability >= 0.2;
           return (
             <li key={p.id}>
               <span
@@ -97,7 +129,9 @@ export function SystemView({ star, onClose, canPickHome, pickHome }: Props) {
               <span className="muted">
                 {p.biome} · {p.orbitAu.toFixed(1)} AU · hab {habPct}%
               </span>
-              {canPick ? (
+              {isOwn ? <span className="tag">yours</span> : null}
+              {isInFlight ? <span className="tag pending">fleet en route</span> : null}
+              {pickable ? (
                 <button
                   className="pick-home"
                   disabled={pending !== null}
@@ -106,18 +140,29 @@ export function SystemView({ star, onClose, canPickHome, pickHome }: Props) {
                   {pending === p.id ? "setting…" : "Set as home"}
                 </button>
               ) : null}
+              {!pickable && launchable ? (
+                <button
+                  className="pick-home"
+                  disabled={pending !== null}
+                  onClick={() => handleLaunch(p)}
+                >
+                  {pending === p.id ? "launching…" : "Launch colony ship"}
+                </button>
+              ) : null}
             </li>
           );
         })}
       </ul>
-      {pickError ? <p className="error">{pickError}</p> : null}
-      {!canPickHome ? (
-        <p className="muted hint">
-          Colony / outpost actions land in Chunk 6 once the order API is wired up.
-        </p>
-      ) : (
+      {actionError ? <p className="error">{actionError}</p> : null}
+      {!hasHome ? (
         <p className="muted hint">
           Pick a habitable planet (≥ 20%) as your home. You get one shot.
+        </p>
+      ) : !canLaunch ? (
+        <p className="muted hint">This is your home system. Pick another system to expand.</p>
+      ) : (
+        <p className="muted hint">
+          Launches cost 200 metal + 100 energy. Travel ~5 min / light-year (faster with research).
         </p>
       )}
     </aside>

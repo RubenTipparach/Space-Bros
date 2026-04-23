@@ -8,11 +8,19 @@ import { Stars } from "./Stars";
 import { SystemView } from "./SystemView";
 import { ResearchPanel } from "./ResearchPanel";
 import { ResourcesHud } from "./ResourcesHud";
+import { FleetsHud } from "./FleetsHud";
 import { usePlayer } from "./usePlayer";
 
 interface GalaxySceneProps {
   seed: string | number;
   starCount: number;
+}
+
+function parseStarFromPlanetId(planetId: string): number | null {
+  const idx = planetId.indexOf(":");
+  if (idx < 0) return null;
+  const n = Number.parseInt(planetId.slice(0, idx), 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
@@ -23,6 +31,26 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
   const selected = selectedId !== null ? galaxy.stars[selectedId] : undefined;
   const me = player.data;
   const hasHome = Boolean(me?.player?.homeColonyId);
+
+  const homeStarId = me?.homeColony ? parseStarFromPlanetId(me.homeColony.planetId) : null;
+
+  const ownedPlanetIds = useMemo(() => {
+    return new Set(me?.colonies.map((c) => c.planetId) ?? []);
+  }, [me]);
+
+  const inFlightPlanetIds = useMemo(() => {
+    // For v1 the colony_founded event payload lives server-side, so
+    // the best we can do from the client is "there's a fleet heading
+    // to this star" — good enough to stop double-launching.
+    const set = new Set<string>();
+    if (!me) return set;
+    for (const f of me.fleets) {
+      for (const planet of galaxy.stars[f.toStarId]?.planets ?? []) {
+        set.add(`${f.toStarId}:${planet.index}`);
+      }
+    }
+    return set;
+  }, [me, galaxy]);
 
   return (
     <div className="scene">
@@ -61,7 +89,7 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
             {me.player.displayName}
             {me.player.isDevUser ? <span className="dev-badge">dev</span> : null}
             {" · "}
-            {hasHome ? "home colony set" : "pick a home planet"}
+            {hasHome ? `${me.colonies.length} ${me.colonies.length === 1 ? "colony" : "colonies"}` : "pick a home planet"}
           </p>
         ) : player.loading ? (
           <p className="muted">loading player…</p>
@@ -74,9 +102,8 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
         </p>
       </header>
 
-      {me && hasHome ? (
-        <ResearchPanel me={me} startResearch={player.startResearch} />
-      ) : null}
+      {me && hasHome ? <ResearchPanel me={me} startResearch={player.startResearch} /> : null}
+      {me ? <FleetsHud me={me} /> : null}
 
       {selected ? (
         <SystemView
@@ -84,6 +111,11 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
           onClose={() => setSelectedId(null)}
           canPickHome={me != null && !hasHome}
           pickHome={player.pickHome}
+          launchColony={player.launchColony}
+          hasHome={hasHome}
+          homeStarId={homeStarId}
+          ownedPlanetIds={ownedPlanetIds}
+          inFlightPlanetIds={inFlightPlanetIds}
         />
       ) : null}
     </div>

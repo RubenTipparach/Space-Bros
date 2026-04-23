@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { HOME_COLONY_RESOURCE_RATES, type Biome } from "@space-bros/shared";
 import { getDb, schema } from "./client";
 
-const { players, playerResources, colonies, research, events } = schema;
+const { players, playerResources, colonies, research, events, fleets } = schema;
 
 export interface PlayerRow {
   id: string;
@@ -118,6 +118,53 @@ export async function getPendingResearch(userId: string): Promise<PendingResearc
   const techId = (row.payload as { techId?: string } | null)?.techId;
   if (!techId) return null;
   return { techId, eventId: row.id, fireAt: row.fireAt };
+}
+
+export interface ColoniesSummary {
+  id: string;
+  planetId: string;
+  biome: string;
+  populationValue: number;
+  populationRate: number;
+  populationT0: number;
+}
+
+export async function getPlayerColonies(userId: string): Promise<ColoniesSummary[]> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      id: colonies.id,
+      planetId: colonies.planetId,
+      biome: colonies.biome,
+      populationValue: colonies.populationValue,
+      populationRate: colonies.populationRate,
+      populationT0: colonies.populationT0,
+    })
+    .from(colonies)
+    .where(eq(colonies.ownerId, userId));
+  return rows;
+}
+
+export interface FleetSummary {
+  id: string;
+  fromStarId: number;
+  toStarId: number;
+  departAt: number;
+  arriveAt: number;
+  ships: Record<string, number>;
+}
+
+export async function getPlayerFleets(userId: string): Promise<FleetSummary[]> {
+  const db = getDb();
+  const rows = await db.select().from(fleets).where(eq(fleets.ownerId, userId));
+  return rows.map((r) => ({
+    id: r.id,
+    fromStarId: r.fromStarId,
+    toStarId: r.toStarId,
+    departAt: r.departAt,
+    arriveAt: r.arriveAt,
+    ships: r.ships,
+  }));
 }
 
 /**

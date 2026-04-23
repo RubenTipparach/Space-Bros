@@ -4,6 +4,8 @@ import {
   getCompletedResearch,
   getOrCreatePlayer,
   getPendingResearch,
+  getPlayerColonies,
+  getPlayerFleets,
   getPlayerHomeColony,
   getPlayerResources,
 } from "@/lib/db/queries";
@@ -16,11 +18,13 @@ export async function GET() {
     const userId = await getCurrentUserId();
     const player = await getOrCreatePlayer(userId);
 
-    const [homeColony, resources, research, pendingResearch] = await Promise.all([
+    const [homeColony, resources, research, pendingResearch, colonies, fleets] = await Promise.all([
       player.homeColonyId ? getPlayerHomeColony(userId) : Promise.resolve(null),
       getPlayerResources(userId),
       getCompletedResearch(userId),
       getPendingResearch(userId),
+      getPlayerColonies(userId),
+      getPlayerFleets(userId),
     ]);
 
     return NextResponse.json({
@@ -35,6 +39,8 @@ export async function GET() {
       resources,
       research,
       pendingResearch,
+      colonies,
+      fleets,
       serverTime: Date.now(),
     });
   } catch (err) {
