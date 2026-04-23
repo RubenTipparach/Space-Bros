@@ -1,0 +1,19 @@
+{
+  "name": "@space-bros/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./galaxy": "./src/galaxy.ts",
+    "./sim": "./src/sim.ts",
+    "./rng": "./src/rng.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1"
+  }
+}
