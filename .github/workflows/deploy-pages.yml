@@ -1,0 +1,80 @@
+name: Deploy offline demo to GitHub Pages
+
+on:
+  # Manual trigger from any branch via the Actions tab.
+  workflow_dispatch:
+    inputs:
+      galaxy_seed:
+        description: "Galaxy seed (optional override)"
+        required: false
+        default: ""
+  # Auto-deploy whenever main moves.
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  REPO_NAME: ${{ github.event.repository.name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck shared
+        run: pnpm --filter @space-bros/shared typecheck
+
+      - name: Test shared
+        run: pnpm --filter @space-bros/shared test
+
+      - name: Drop API routes (static export can't host them)
+        run: rm -rf apps/web/app/api
+
+      - name: Build static site
+        env:
+          BUILD_OUTPUT: export
+          BASE_PATH: /${{ env.REPO_NAME }}
+          NEXT_PUBLIC_OFFLINE_MODE: "true"
+          NEXT_PUBLIC_GALAXY_SEED: ${{ inputs.galaxy_seed || 'space-bros-offline' }}
+          NEXT_PUBLIC_GALAXY_STAR_COUNT: "12000"
+        run: pnpm --filter web build
+
+      - name: Ensure .nojekyll so GH Pages leaves _next/ alone
+        run: touch apps/web/out/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

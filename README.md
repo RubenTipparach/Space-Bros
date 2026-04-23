@@ -98,6 +98,30 @@ pnpm test
 pnpm dev           # http://localhost:3000
 ```
 
+### Offline mode (no Neon, no Clerk)
+
+Run the whole game entirely in the browser, backed by `localStorage`.
+Useful while the stack is still stubbed out.
+
+```bash
+NEXT_PUBLIC_OFFLINE_MODE=true pnpm dev
+```
+
+All the same validation and event-queue logic runs in-browser; the only
+things you lose are persistence across devices and real multiplayer.
+Look for the green `offline` badge in the HUD. A `Reset offline save`
+button is available there if you want to start over.
+
+### GitHub Pages demo
+
+Every push to `main` deploys a static, offline-mode build to
+`https://<owner>.github.io/<repo>/`. Any branch can be deployed manually
+via **Actions → Deploy offline demo to GitHub Pages → Run workflow**
+(you pick the branch in the dropdown).
+
+The workflow deletes `apps/web/app/api/` before building so Next's
+static export mode doesn't fail on the dynamic route handlers.
+
 ### Database (Neon + Drizzle)
 
 The schema lives in `apps/web/lib/db/schema.ts`; SQL migrations are

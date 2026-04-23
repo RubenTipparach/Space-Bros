@@ -1,75 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IS_OFFLINE, getApi } from "@/lib/api";
+import type {
+  ApiError,
+  ApiResult,
+  LaunchArgs,
+  MeResponse,
+} from "@/lib/api/types";
 
-export interface PlayerSummary {
-  id: string;
-  displayName: string;
-  homeColonyId: string | null;
-  lastSimAt: number;
-  isDevUser: boolean;
-}
-
-export interface HomeColony {
-  id: string;
-  planetId: string;
-  biome: string;
-  populationValue: number;
-  populationRate: number;
-  populationT0: number;
-}
-
-export interface AccumulatorView {
-  value: number;
-  rate: number;
-  t0: number;
-}
-
-export interface ResourcesView {
-  metal: AccumulatorView;
-  energy: AccumulatorView;
-  science: AccumulatorView;
-}
-
-export interface PendingResearch {
-  techId: string;
-  eventId: string;
-  fireAt: number;
-}
-
-export interface ColonySummary {
-  id: string;
-  planetId: string;
-  biome: string;
-  populationValue: number;
-  populationRate: number;
-  populationT0: number;
-}
-
-export interface FleetSummary {
-  id: string;
-  fromStarId: number;
-  toStarId: number;
-  departAt: number;
-  arriveAt: number;
-  ships: Record<string, number>;
-}
-
-export interface MeResponse {
-  player: PlayerSummary;
-  homeColony: HomeColony | null;
-  resources: ResourcesView | null;
-  research: string[];
-  pendingResearch: PendingResearch | null;
-  colonies: ColonySummary[];
-  fleets: FleetSummary[];
-  serverTime: number;
-}
-
-export interface ApiError {
-  error: string;
-  message?: string;
-}
+export type {
+  PlayerSummary,
+  HomeColony,
+  AccumulatorView,
+  ResourcesView,
+  PendingResearch,
+  ColonySummary,
+  FleetSummary,
+  MeResponse,
+  ApiError,
+} from "@/lib/api/types";
 
 export interface PlayerState {
   data: MeResponse | null;
@@ -79,120 +29,62 @@ export interface PlayerState {
   pickHome: (
     starId: number,
     planetIndex: number,
-  ) => Promise<{ ok: true } | { ok: false; error: ApiError }>;
-  startResearch: (techId: string) => Promise<{ ok: true } | { ok: false; error: ApiError }>;
-  launchColony: (args: {
-    fromStarId: number;
-    toStarId: number;
-    toPlanetIndex: number;
-  }) => Promise<{ ok: true } | { ok: false; error: ApiError }>;
+  ) => Promise<ApiResult>;
+  startResearch: (techId: string) => Promise<ApiResult>;
+  launchColony: (args: LaunchArgs) => Promise<ApiResult>;
 }
 
-const DEFAULT_POLL_MS = 15_000;
+// Offline mode: tick the loop fast so fleets and research feel live.
+// Online: 15s is gentle on Neon + Vercel, 60s when the tab is hidden.
+const POLL_ACTIVE_MS = IS_OFFLINE ? 1_000 : 15_000;
+const POLL_HIDDEN_MS = IS_OFFLINE ? 5_000 : 60_000;
 
-function newOrderId(): string {
-  return (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-}
-
-export function usePlayer(pollMs: number = DEFAULT_POLL_MS): PlayerState {
+export function usePlayer(): PlayerState {
   const [data, setData] = useState<MeResponse | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
   const mounted = useRef(true);
+  const api = getApi();
 
   const refresh = useCallback(async () => {
-    try {
-      const r = await fetch("/api/me", { cache: "no-store", credentials: "include" });
-      if (!r.ok) {
-        const body = (await r.json().catch(() => ({}))) as Partial<ApiError>;
-        if (mounted.current) {
-          setError({ error: body.error ?? `http_${r.status}`, message: body.message });
-          setData(null);
-        }
-        return;
-      }
-      const json = (await r.json()) as MeResponse;
-      if (mounted.current) {
-        setData(json);
-        setError(null);
-      }
-    } catch (e) {
-      if (mounted.current) {
-        setError({
-          error: "network",
-          message: e instanceof Error ? e.message : "Network error",
-        });
-      }
-    } finally {
-      if (mounted.current) setLoading(false);
+    const res = await api.getMe();
+    if (!mounted.current) return;
+    if (res.ok) {
+      setData(res.data);
+      setError(null);
+    } else {
+      setError(res.error);
+      setData(null);
     }
-  }, []);
+    setLoading(false);
+  }, [api]);
 
   const pickHome = useCallback<PlayerState["pickHome"]>(async (starId, planetIndex) => {
-    const r = await fetch("/api/home", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ starId, planetIndex }),
-    });
-    if (!r.ok) {
-      const body = (await r.json().catch(() => ({}))) as Partial<ApiError>;
-      return {
-        ok: false,
-        error: { error: body.error ?? `http_${r.status}`, message: body.message },
-      };
-    }
-    await refresh();
-    return { ok: true };
-  }, [refresh]);
+    const res = await api.pickHome(starId, planetIndex);
+    if (res.ok) await refresh();
+    return res;
+  }, [api, refresh]);
 
   const startResearch = useCallback<PlayerState["startResearch"]>(async (techId) => {
-    const r = await fetch("/api/orders/research", {
-      method: "POST",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ orderId: newOrderId(), techId }),
-    });
-    if (!r.ok) {
-      const body = (await r.json().catch(() => ({}))) as Partial<ApiError>;
-      return {
-        ok: false,
-        error: { error: body.error ?? `http_${r.status}`, message: body.message },
-      };
-    }
-    await refresh();
-    return { ok: true };
-  }, [refresh]);
+    const res = await api.startResearch(techId);
+    if (res.ok) await refresh();
+    return res;
+  }, [api, refresh]);
 
-  const launchColony = useCallback<PlayerState["launchColony"]>(
-    async ({ fromStarId, toStarId, toPlanetIndex }) => {
-      const r = await fetch("/api/orders/launch", {
-        method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ orderId: newOrderId(), fromStarId, toStarId, toPlanetIndex }),
-      });
-      if (!r.ok) {
-        const body = (await r.json().catch(() => ({}))) as Partial<ApiError>;
-        return {
-          ok: false,
-          error: { error: body.error ?? `http_${r.status}`, message: body.message },
-        };
-      }
-      await refresh();
-      return { ok: true };
-    },
-    [refresh],
-  );
+  const launchColony = useCallback<PlayerState["launchColony"]>(async (args) => {
+    const res = await api.launchColony(args);
+    if (res.ok) await refresh();
+    return res;
+  }, [api, refresh]);
 
   useEffect(() => {
     mounted.current = true;
     refresh();
-    const id = window.setInterval(() => {
-      if (!document.hidden) refresh();
-    }, pollMs);
+    let id = window.setInterval(refresh, POLL_ACTIVE_MS);
     const onVis = () => {
+      window.clearInterval(id);
       if (!document.hidden) refresh();
+      id = window.setInterval(refresh, document.hidden ? POLL_HIDDEN_MS : POLL_ACTIVE_MS);
     };
     document.addEventListener("visibilitychange", onVis);
     return () => {
@@ -200,7 +92,7 @@ export function usePlayer(pollMs: number = DEFAULT_POLL_MS): PlayerState {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [refresh, pollMs]);
+  }, [refresh]);
 
   return { data, error, loading, refresh, pickHome, startResearch, launchColony };
 }

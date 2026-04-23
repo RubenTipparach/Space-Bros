@@ -10,6 +10,7 @@ import { ResearchPanel } from "./ResearchPanel";
 import { ResourcesHud } from "./ResourcesHud";
 import { FleetsHud } from "./FleetsHud";
 import { usePlayer } from "./usePlayer";
+import { IS_OFFLINE, resetOfflineState } from "@/lib/api";
 
 interface GalaxySceneProps {
   seed: string | number;
@@ -79,7 +80,10 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
       </Canvas>
 
       <header className="hud">
-        <h1>Space Bros</h1>
+        <h1>
+          Space Bros
+          {IS_OFFLINE ? <span className="offline-badge">offline</span> : null}
+        </h1>
         <p className="muted">
           {galaxy.stars.length.toLocaleString()} stars · seed{" "}
           <code>{String(galaxy.seed)}</code>
@@ -100,6 +104,19 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
         <p className="muted hint">
           Drag to orbit · pinch / scroll to zoom · tap a star
         </p>
+        {IS_OFFLINE ? (
+          <button
+            className="reset-btn"
+            onClick={() => {
+              if (window.confirm("Wipe offline save and start over?")) {
+                resetOfflineState();
+                window.location.reload();
+              }
+            }}
+          >
+            Reset offline save
+          </button>
+        ) : null}
       </header>
 
       {me && hasHome ? <ResearchPanel me={me} startResearch={player.startResearch} /> : null}
