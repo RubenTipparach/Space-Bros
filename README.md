@@ -58,7 +58,9 @@ mechanics that make this work.
   mobile-first controls.
 - [ ] **Chunk 3** — Sim core: accumulators, event queue, pure `processEvent`.
 - [x] **Chunk 4a** — Postgres schema + Drizzle setup (migrations, client).
-- [ ] **Chunk 4b** — Clerk auth + `/api/me` + home-planet pick flow.
+- [x] **Chunk 4b** — Dev-cookie auth + `/api/me` + home-planet pick flow.
+- [ ] **Chunk 4c** — Real Clerk integration (plug into `lib/auth.ts`).
+- [x] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
 - [ ] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
 - [ ] **Chunk 6** — Order API: build, launch, research, terraform.
 - [ ] **Chunk 7** — Realtime (SSE) + optimistic UI reconciliation.
