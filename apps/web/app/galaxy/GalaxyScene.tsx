@@ -6,6 +6,7 @@ import { OrbitControls } from "@react-three/drei";
 import { generateGalaxy, type Star } from "@space-bros/shared";
 import { Stars } from "./Stars";
 import { SystemView } from "./SystemView";
+import { usePlayer } from "./usePlayer";
 
 interface GalaxySceneProps {
   seed: string | number;
@@ -15,8 +16,11 @@ interface GalaxySceneProps {
 export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
   const galaxy = useMemo(() => generateGalaxy({ seed, starCount }), [seed, starCount]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const player = usePlayer();
 
   const selected = selectedId !== null ? galaxy.stars[selectedId] : undefined;
+  const me = player.data?.player;
+  const hasHome = Boolean(me?.homeColonyId);
 
   return (
     <div className="scene">
@@ -50,13 +54,32 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
           {galaxy.stars.length.toLocaleString()} stars · seed{" "}
           <code>{String(galaxy.seed)}</code>
         </p>
+        {me ? (
+          <p className="muted">
+            {me.displayName}
+            {me.isDevUser ? <span className="dev-badge">dev</span> : null}
+            {" · "}
+            {hasHome ? "home colony set" : "pick a home planet"}
+          </p>
+        ) : player.loading ? (
+          <p className="muted">loading player…</p>
+        ) : player.error ? (
+          <p className="error">
+            {player.error.message ?? player.error.error}
+          </p>
+        ) : null}
         <p className="muted hint">
           Drag to orbit · pinch / scroll to zoom · tap a star
         </p>
       </header>
 
       {selected ? (
-        <SystemView star={selected} onClose={() => setSelectedId(null)} />
+        <SystemView
+          star={selected}
+          onClose={() => setSelectedId(null)}
+          canPickHome={me != null && !hasHome}
+          pickHome={player.pickHome}
+        />
       ) : null}
     </div>
   );

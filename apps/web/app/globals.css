@@ -177,6 +177,53 @@ code {
   font-size: 11px;
 }
 
+.planet-list .pick-home {
+  grid-column: 2;
+  justify-self: start;
+  margin-top: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: rgba(138, 180, 255, 0.12);
+  color: var(--text);
+  cursor: pointer;
+  width: auto;
+  height: auto;
+}
+
+.planet-list .pick-home:hover {
+  background: rgba(138, 180, 255, 0.22);
+}
+
+.planet-list .pick-home:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #ff9b9b;
+}
+
+.hud .error {
+  font-size: 11px;
+}
+
+.dev-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(255, 196, 120, 0.18);
+  color: #ffc478;
+  border: 1px solid rgba(255, 196, 120, 0.4);
+}
+
 @media (max-width: 640px) {
   .system-panel {
     top: auto;
