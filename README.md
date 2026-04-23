@@ -25,6 +25,9 @@ An incremental, persistent, multiplayer galaxy-conquest game. Browser-based
 4. **No background tick while idle.** A cron drains overdue events. Reading a
    player's empire also catches them up on demand.
 
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the deeper design
+(data model, request lifecycles, failure modes, scaling envelope).
+
 ## Services / stack (cheap + Vercel-friendly)
 
 | Concern       | Pick                        | Notes                                         |
