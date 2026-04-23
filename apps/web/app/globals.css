@@ -1,5 +1,11 @@
 :root {
   color-scheme: dark;
+  --bg: #05060a;
+  --panel: rgba(12, 14, 22, 0.82);
+  --panel-border: rgba(138, 180, 255, 0.18);
+  --text: #e8ecff;
+  --muted: #8892b0;
+  --accent: #8ab4ff;
 }
 
 * {
@@ -10,30 +16,183 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: #05060a;
-  color: #e8ecff;
+  background: var(--bg);
+  color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   min-height: 100svh;
+  overscroll-behavior: none;
 }
 
-main {
-  padding: 24px;
-  max-width: 720px;
-  margin: 0 auto;
+body {
+  height: 100svh;
+  overflow: hidden;
 }
 
-h1 {
-  letter-spacing: 0.02em;
-  font-weight: 700;
+.scene {
+  position: fixed;
+  inset: 0;
+  touch-action: none;
 }
 
-a {
-  color: #8ab4ff;
+.scene canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.loading {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(8px);
+  border-radius: 10px;
+  pointer-events: none;
+  max-width: calc(100vw - 32px);
+}
+
+.hud h1 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+}
+
+.hud p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.hint {
+  margin-top: 4px !important;
+  font-size: 11px !important;
 }
 
 code {
   background: #11131c;
-  padding: 2px 6px;
+  padding: 1px 5px;
   border-radius: 4px;
   font-size: 0.9em;
+}
+
+.system-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100svh - 32px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  padding: 14px 16px 16px;
+  color: var(--text);
+}
+
+.system-panel header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.system-panel h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.system-panel p {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.system-panel button {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.system-panel button:hover {
+  background: rgba(138, 180, 255, 0.08);
+}
+
+.planet-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.planet-list li {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.planet-list .biome-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  grid-row: span 2;
+}
+
+.planet-list .planet-name {
+  font-weight: 600;
+}
+
+.planet-list .muted {
+  grid-column: 2;
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .system-panel {
+    top: auto;
+    right: 8px;
+    left: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 55svh;
+  }
+
+  .hud {
+    top: 8px;
+    left: 8px;
+  }
+
+  .hud h1 {
+    font-size: 15px;
+  }
 }
