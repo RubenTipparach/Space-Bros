@@ -25,8 +25,16 @@ An incremental, persistent, multiplayer galaxy-conquest game. Browser-based
 4. **No background tick while idle.** A cron drains overdue events. Reading a
    player's empire also catches them up on demand.
 
-See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the deeper design
-(data model, request lifecycles, failure modes, scaling envelope).
+## Docs map
+
+- [`docs/GAMEPLAY.md`](./docs/GAMEPLAY.md) — _what the player experiences._
+  Mechanics, buildings, tech tree, ships, balance targets.
+- [`docs/ROADMAP.md`](./docs/ROADMAP.md) — _what we're building next._
+  Shortest path to playable single-player, then post-MVP parking lot.
+- [`docs/DECISIONS.md`](./docs/DECISIONS.md) — _ADR log._ Every design call
+  with its alternative and "revisit when" trigger.
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — _how the server works._ Data
+  model, request lifecycles, failure modes, scaling envelope.
 
 ## Services / stack (cheap + Vercel-only in v1)
 
@@ -49,29 +57,16 @@ _Universe model:_ **persistent** (no seasonal wipes). See
 [`ARCHITECTURE.md` §9](./ARCHITECTURE.md) for the new-player fairness
 mechanics that make this work.
 
-## Build plan (chunks)
+## Status
 
-- [x] **Chunk 0** — Repo skeleton: pnpm workspace, Next.js app, shared lib.
-- [ ] **Chunk 1** — Deterministic galaxy generator (types + tests in `shared`,
-  already stubbed; expand planets/resources/spiral arms).
-- [ ] **Chunk 2** — Three.js galaxy viewer: instanced stars, tap-to-select,
-  mobile-first controls.
-- [ ] **Chunk 3** — Sim core: accumulators, event queue, pure `processEvent`.
-- [x] **Chunk 4a** — Postgres schema + Drizzle setup (migrations, client).
-- [x] **Chunk 4b** — Dev-cookie auth + `/api/me` + home-planet pick flow.
-- [ ] **Chunk 4c** — Real Clerk integration (plug into `lib/auth.ts`).
-- [x] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
-- [ ] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
-- [x] **Chunk 6a** — Order API: start research (idempotent, deducts resources, schedules event).
-- [x] **Chunk 6b** — Order API: launch colony ship (travel at 5 min/ly, schedules `colony_founded`).
-- [ ] **Chunk 6c** — Order API: buildings, terraforming (needs research tree).
-- [ ] **Chunk 7** — Realtime (SSE) + optimistic UI reconciliation.
-- [ ] **Chunk 8** — Research & terraforming trees (data-driven).
-- [ ] **Chunk 9** — Multi-player interactions: outposts on shared planets,
-  fog of war.
-- [ ] **Chunk 10** — Combat + diplomacy MVP.
-- [ ] **Chunk 11** — PWA polish + web push for completed events.
-- [ ] **Chunk 12** — Anti-cheat, admin, backup, seasons.
+Working: offline single-player loop (pick home, research, launch colony
+ships, wait for them to land, see colonies appear). Online stack is built
+but dormant behind a stubbed-out auth layer. See
+[`docs/ROADMAP.md`](./docs/ROADMAP.md) for the shortest path to a playable
+single-player MVP; the full chunk-by-chunk history is there too.
+
+**Next up:** Chunk 6c (buildings with real rate effects) and
+Chunk 8 (tech tree with real effects). See the roadmap.
 
 ## Repo layout
 
