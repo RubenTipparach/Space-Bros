@@ -46,17 +46,25 @@ export function ResearchPanel({ me, startResearch }: Props) {
     return t.prereqs.every((p) => owned.has(p));
   });
 
-  const resources = me.resources;
+  // Per ADR-012, science is a per-colony stockpile. SP-1a defaults to
+  // researching at home; SP-1b will let the player pick which colony
+  // contributes science.
+  const home = me.homeColony;
+  const credits = me.credits;
   const canAfford = (tech: TechDef): boolean => {
-    if (!resources) return false;
+    if (!home || !credits) return false;
     const now = clientNow(me);
-    const metal = accumulatorAt(resources.metal, now);
-    const energy = accumulatorAt(resources.energy, now);
-    const science = accumulatorAt(resources.science, now);
+    const science = accumulatorAt(home.science, now);
+    const metal = accumulatorAt(home.metal, now);
+    const food = accumulatorAt(home.food, now);
+    const military = accumulatorAt(home.military, now);
+    const credBal = accumulatorAt(credits, now);
     return (
+      science >= (tech.cost.science ?? 0) &&
       metal >= (tech.cost.metal ?? 0) &&
-      energy >= (tech.cost.energy ?? 0) &&
-      science >= (tech.cost.science ?? 0)
+      food >= (tech.cost.food ?? 0) &&
+      military >= (tech.cost.military ?? 0) &&
+      credBal >= (tech.cost.credits ?? 0)
     );
   };
 
@@ -66,7 +74,7 @@ export function ResearchPanel({ me, startResearch }: Props) {
     if (!chosen) return;
     setPending(true);
     setErr(null);
-    const res = await startResearch(chosen.id);
+    const res = await startResearch(chosen.id, home?.id);
     setPending(false);
     if (!res.ok) setErr(res.error.message ?? res.error.error);
   };
@@ -107,7 +115,9 @@ export function ResearchPanel({ me, startResearch }: Props) {
               {chosen.description} · cost{" "}
               {chosen.cost.science ? `${chosen.cost.science}S ` : ""}
               {chosen.cost.metal ? `${chosen.cost.metal}M ` : ""}
-              {chosen.cost.energy ? `${chosen.cost.energy}E ` : ""}·{" "}
+              {chosen.cost.food ? `${chosen.cost.food}F ` : ""}
+              {chosen.cost.military ? `${chosen.cost.military}X ` : ""}
+              {chosen.cost.credits ? `$${chosen.cost.credits} ` : ""}·{" "}
               {formatDuration(chosen.durationSeconds * 1000)}
             </p>
           ) : null}

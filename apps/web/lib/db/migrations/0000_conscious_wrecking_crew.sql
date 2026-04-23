@@ -8,7 +8,19 @@ CREATE TABLE "colonies" (
 	"population_rate" double precision DEFAULT 0 NOT NULL,
 	"population_t0" bigint NOT NULL,
 	"population_cap" double precision,
-	"buildings" jsonb DEFAULT '{}'::jsonb NOT NULL
+	"buildings" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"metal_value" double precision DEFAULT 0 NOT NULL,
+	"metal_rate" double precision DEFAULT 0 NOT NULL,
+	"metal_t0" bigint NOT NULL,
+	"food_value" double precision DEFAULT 0 NOT NULL,
+	"food_rate" double precision DEFAULT 0 NOT NULL,
+	"food_t0" bigint NOT NULL,
+	"science_value" double precision DEFAULT 0 NOT NULL,
+	"science_rate" double precision DEFAULT 0 NOT NULL,
+	"science_t0" bigint NOT NULL,
+	"military_value" double precision DEFAULT 0 NOT NULL,
+	"military_rate" double precision DEFAULT 0 NOT NULL,
+	"military_t0" bigint NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "events" (
@@ -53,26 +65,16 @@ CREATE TABLE "planet_overlays" (
 	"pinned_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "player_resources" (
-	"player_id" text PRIMARY KEY NOT NULL,
-	"metal_value" double precision DEFAULT 0 NOT NULL,
-	"metal_rate" double precision DEFAULT 0 NOT NULL,
-	"metal_t0" bigint NOT NULL,
-	"energy_value" double precision DEFAULT 0 NOT NULL,
-	"energy_rate" double precision DEFAULT 0 NOT NULL,
-	"energy_t0" bigint NOT NULL,
-	"science_value" double precision DEFAULT 0 NOT NULL,
-	"science_rate" double precision DEFAULT 0 NOT NULL,
-	"science_t0" bigint NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE "players" (
 	"id" text PRIMARY KEY NOT NULL,
 	"display_name" text NOT NULL,
 	"home_colony_id" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"last_active_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"last_sim_at" bigint NOT NULL
+	"last_sim_at" bigint NOT NULL,
+	"credits_value" double precision DEFAULT 0 NOT NULL,
+	"credits_rate" double precision DEFAULT 0 NOT NULL,
+	"credits_t0" bigint NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "research" (
@@ -86,7 +88,6 @@ ALTER TABLE "colonies" ADD CONSTRAINT "colonies_owner_id_players_id_fk" FOREIGN 
 ALTER TABLE "events" ADD CONSTRAINT "events_owner_id_players_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."players"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fleets" ADD CONSTRAINT "fleets_owner_id_players_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."players"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "orders_log" ADD CONSTRAINT "orders_log_player_id_players_id_fk" FOREIGN KEY ("player_id") REFERENCES "public"."players"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "player_resources" ADD CONSTRAINT "player_resources_player_id_players_id_fk" FOREIGN KEY ("player_id") REFERENCES "public"."players"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "research" ADD CONSTRAINT "research_player_id_players_id_fk" FOREIGN KEY ("player_id") REFERENCES "public"."players"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "colonies_owner_idx" ON "colonies" USING btree ("owner_id");--> statement-breakpoint
 CREATE INDEX "colonies_planet_idx" ON "colonies" USING btree ("planet_id");--> statement-breakpoint

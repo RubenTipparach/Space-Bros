@@ -12,8 +12,7 @@ import { schema } from "@/lib/db/client";
 import { getGalaxy } from "@/lib/galaxy-server";
 import {
   OrderError,
-  deductResources,
-  loadResources,
+  deductCost,
   runIdempotentOrder,
   scheduleEvent,
 } from "@/lib/db/orders";
@@ -67,21 +66,22 @@ export async function POST(request: Request) {
       "launch_colony",
       parsed.data,
       async (tx) => {
-        // Must own a colony at the source star.
-        const ownsFrom = await tx
+        // Find the source colony at the source star (we draw metal from it).
+        const sourceRows = await tx
           .select({ id: colonies.id })
           .from(colonies)
           .where(
             and(eq(colonies.ownerId, userId), like(colonies.planetId, `${fromStarId}:%`)),
           )
           .limit(1);
-        if (!ownsFrom[0]) {
+        if (!sourceRows[0]) {
           throw new OrderError(
             "no_source_colony",
             "You don't have a colony at the source star.",
             409,
           );
         }
+        const sourceColonyId = sourceRows[0].id;
 
         // Target must be unoccupied.
         const targetPlanetId = `${toStarId}:${toPlanetIndex}`;
@@ -107,12 +107,12 @@ export async function POST(request: Request) {
           .where(eq(research.playerId, userId));
         const techs = new Set(techRows.map((r) => r.techId));
 
-        const snap = await loadResources(tx, userId);
-        await deductResources(tx, userId, snap, COLONY_SHIP_COST);
+        // Source-colony metal + global credits, in one shot.
+        const { credits } = await deductCost(tx, userId, COLONY_SHIP_COST, sourceColonyId);
 
         const distance = distanceLy(fromStar, toStar);
         const estimate = travelEstimate(distance, techs);
-        const departAt = snap.updatedAt;
+        const departAt = (credits?.updatedAt) ?? Date.now();
         const arriveAt = departAt + estimate.durationMs;
 
         const fleetId = `flt_${orderId}`;
@@ -143,6 +143,7 @@ export async function POST(request: Request) {
         return {
           fleetId,
           eventId,
+          sourceColonyId,
           departAt,
           arriveAt,
           distanceLy: distance,

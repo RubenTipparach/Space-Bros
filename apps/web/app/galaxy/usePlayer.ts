@@ -13,7 +13,7 @@ export type {
   PlayerSummary,
   HomeColony,
   AccumulatorView,
-  ResourcesView,
+  ColonyResources,
   PendingResearch,
   ColonySummary,
   FleetSummary,
@@ -30,7 +30,7 @@ export interface PlayerState {
     starId: number,
     planetIndex: number,
   ) => Promise<ApiResult>;
-  startResearch: (techId: string) => Promise<ApiResult>;
+  startResearch: (techId: string, colonyId?: string) => Promise<ApiResult>;
   launchColony: (args: LaunchArgs) => Promise<ApiResult>;
 }
 
@@ -65,8 +65,8 @@ export function usePlayer(): PlayerState {
     return res;
   }, [api, refresh]);
 
-  const startResearch = useCallback<PlayerState["startResearch"]>(async (techId) => {
-    const res = await api.startResearch(techId);
+  const startResearch = useCallback<PlayerState["startResearch"]>(async (techId, colonyId) => {
+    const res = await api.startResearch(techId, colonyId);
     if (res.ok) await refresh();
     return res;
   }, [api, refresh]);

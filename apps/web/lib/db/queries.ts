@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { HOME_COLONY_RESOURCE_RATES, type Biome } from "@space-bros/shared";
 import { getDb, schema } from "./client";
 
-const { players, playerResources, colonies, research, events, fleets } = schema;
+const { players, colonies, research, events, fleets } = schema;
 
 export interface PlayerRow {
   id: string;
@@ -11,6 +11,12 @@ export interface PlayerRow {
   createdAt: Date;
   lastActiveAt: Date;
   lastSimAt: number;
+}
+
+export interface ResourceAccumulator {
+  value: number;
+  rate: number;
+  t0: number;
 }
 
 export interface ColonyRow {
@@ -24,11 +30,19 @@ export interface ColonyRow {
   populationT0: number;
   populationCap: number | null;
   buildings: Record<string, number>;
+  metal: ResourceAccumulator;
+  food: ResourceAccumulator;
+  science: ResourceAccumulator;
+  military: ResourceAccumulator;
 }
 
 /**
- * Returns the player row, creating it (and its resources row) on first
- * sight. Bumps `last_active_at`. One round-trip on the hot path.
+ * Returns the player row, creating it on first sight. Bumps
+ * `last_active_at`. One round-trip on the hot path.
+ *
+ * Pre-home, the player has zero credits rate. `foundHomeColony` seeds
+ * the §5.2 baseline (+0.1 credits/s + per-colony rates on the home
+ * colony itself).
  */
 export async function getOrCreatePlayer(userId: string): Promise<PlayerRow> {
   const db = getDb();
@@ -50,15 +64,9 @@ export async function getOrCreatePlayer(userId: string): Promise<PlayerRow> {
       homeColonyId: null,
       lastActiveAt: new Date(now),
       lastSimAt: now,
+      creditsT0: now,
     })
     .returning();
-
-  await db.insert(playerResources).values({
-    playerId: userId,
-    metalT0: now,
-    energyT0: now,
-    scienceT0: now,
-  });
 
   return toPlayerRow(inserted!);
 }
@@ -69,26 +77,24 @@ export async function getPlayerHomeColony(userId: string): Promise<ColonyRow | n
   return rows[0] ? toColonyRow(rows[0]) : null;
 }
 
-export interface ResourcesView {
-  metal: { value: number; rate: number; t0: number };
-  energy: { value: number; rate: number; t0: number };
-  science: { value: number; rate: number; t0: number };
+export interface CreditsView {
+  value: number;
+  rate: number;
+  t0: number;
 }
 
-export async function getPlayerResources(userId: string): Promise<ResourcesView | null> {
+export async function getPlayerCredits(userId: string): Promise<CreditsView | null> {
   const db = getDb();
   const rows = await db
-    .select()
-    .from(playerResources)
-    .where(eq(playerResources.playerId, userId))
+    .select({
+      value: players.creditsValue,
+      rate: players.creditsRate,
+      t0: players.creditsT0,
+    })
+    .from(players)
+    .where(eq(players.id, userId))
     .limit(1);
-  const r = rows[0];
-  if (!r) return null;
-  return {
-    metal: { value: r.metalValue, rate: r.metalRate, t0: r.metalT0 },
-    energy: { value: r.energyValue, rate: r.energyRate, t0: r.energyT0 },
-    science: { value: r.scienceValue, rate: r.scienceRate, t0: r.scienceT0 },
-  };
+  return rows[0] ?? null;
 }
 
 export async function getCompletedResearch(userId: string): Promise<string[]> {
@@ -104,6 +110,7 @@ export interface PendingResearch {
   techId: string;
   eventId: string;
   fireAt: number;
+  colonyId: string | null;
 }
 
 export async function getPendingResearch(userId: string): Promise<PendingResearch | null> {
@@ -115,34 +122,22 @@ export async function getPendingResearch(userId: string): Promise<PendingResearc
     .limit(1);
   const row = rows[0];
   if (!row) return null;
-  const techId = (row.payload as { techId?: string } | null)?.techId;
-  if (!techId) return null;
-  return { techId, eventId: row.id, fireAt: row.fireAt };
+  const payload = row.payload as { techId?: string; colonyId?: string } | null;
+  if (!payload?.techId) return null;
+  return {
+    techId: payload.techId,
+    eventId: row.id,
+    fireAt: row.fireAt,
+    colonyId: payload.colonyId ?? null,
+  };
 }
 
-export interface ColoniesSummary {
-  id: string;
-  planetId: string;
-  biome: string;
-  populationValue: number;
-  populationRate: number;
-  populationT0: number;
-}
+export interface ColonySummary extends ColonyRow {}
 
-export async function getPlayerColonies(userId: string): Promise<ColoniesSummary[]> {
+export async function getPlayerColonies(userId: string): Promise<ColonySummary[]> {
   const db = getDb();
-  const rows = await db
-    .select({
-      id: colonies.id,
-      planetId: colonies.planetId,
-      biome: colonies.biome,
-      populationValue: colonies.populationValue,
-      populationRate: colonies.populationRate,
-      populationT0: colonies.populationT0,
-    })
-    .from(colonies)
-    .where(eq(colonies.ownerId, userId));
-  return rows;
+  const rows = await db.select().from(colonies).where(eq(colonies.ownerId, userId));
+  return rows.map(toColonyRow);
 }
 
 export interface FleetSummary {
@@ -171,10 +166,10 @@ export async function getPlayerFleets(userId: string): Promise<FleetSummary[]> {
  * Found a player's home colony atomically:
  *   - must not already have a home
  *   - must not conflict on `colonies.id` (player:planetId)
- *   - writes the colony, stamps `players.home_colony_id`
+ *   - writes the colony with the §5.2 baseline per-colony rates
+ *   - stamps `players.home_colony_id` and seeds the player credits rate
  *
- * Returns the new colony. Throws with a stable `code` on conflict so the
- * route handler can map to 409.
+ * Returns the new colony.
  */
 export async function foundHomeColony(args: {
   userId: string;
@@ -186,6 +181,7 @@ export async function foundHomeColony(args: {
   const db = getDb();
   const now = Date.now();
   const colonyId = `${args.userId}:${args.planetId}`;
+  const r = HOME_COLONY_RESOURCE_RATES;
 
   return db.transaction(async (tx) => {
     const player = await tx
@@ -222,24 +218,25 @@ export async function foundHomeColony(args: {
         populationValue: args.initialPopulation,
         populationRate: args.populationRatePerSec,
         populationT0: now,
+        metalRate: r.metalPerSecond,
+        metalT0: now,
+        foodRate: r.foodPerSecond,
+        foodT0: now,
+        scienceRate: r.sciencePerSecond,
+        scienceT0: now,
+        militaryRate: r.militaryPerSecond,
+        militaryT0: now,
       })
       .returning();
 
-    await tx.update(players).set({ homeColonyId: colonyId }).where(eq(players.id, args.userId));
-
-    // Seed resource production. Pre-home the player has zero rates;
-    // founding the capital unlocks the baseline economy.
     await tx
-      .update(playerResources)
+      .update(players)
       .set({
-        metalRate: HOME_COLONY_RESOURCE_RATES.metalPerSecond,
-        metalT0: now,
-        energyRate: HOME_COLONY_RESOURCE_RATES.energyPerSecond,
-        energyT0: now,
-        scienceRate: HOME_COLONY_RESOURCE_RATES.sciencePerSecond,
-        scienceT0: now,
+        homeColonyId: colonyId,
+        creditsRate: r.creditsPerSecond,
+        creditsT0: now,
       })
-      .where(eq(playerResources.playerId, args.userId));
+      .where(eq(players.id, args.userId));
 
     return toColonyRow(colony!);
   });
@@ -275,5 +272,13 @@ function toColonyRow(row: typeof colonies.$inferSelect): ColonyRow {
     populationT0: row.populationT0,
     populationCap: row.populationCap,
     buildings: row.buildings,
+    metal: { value: row.metalValue, rate: row.metalRate, t0: row.metalT0 },
+    food: { value: row.foodValue, rate: row.foodRate, t0: row.foodT0 },
+    science: { value: row.scienceValue, rate: row.scienceRate, t0: row.scienceT0 },
+    military: {
+      value: row.militaryValue,
+      rate: row.militaryRate,
+      t0: row.militaryT0,
+    },
   };
 }

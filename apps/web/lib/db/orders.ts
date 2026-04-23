@@ -1,17 +1,25 @@
 import { and, eq } from "drizzle-orm";
-import { accumulatorAt, type ResourceCost } from "@space-bros/shared";
+import {
+  PER_COLONY_RESOURCES,
+  accumulatorAt,
+  type PerColonyResource,
+  type ResourceCost,
+} from "@space-bros/shared";
 import { getDb, schema, type Db } from "./client";
 
-const { playerResources, events, ordersLog } = schema;
+const { players, colonies, events, ordersLog } = schema;
 
 /**
  * Shared plumbing for order routes. Each endpoint validates its own
- * semantics (prereqs, one-at-a-time constraints, etc.); the helpers
- * below deal with cross-cutting concerns: idempotency, resource
- * deduction against the caught-up accumulator, and event scheduling.
+ * semantics; the helpers below deal with cross-cutting concerns:
+ * idempotency, per-colony resource accounting against the caught-up
+ * accumulator, and event scheduling.
  *
- * Everything runs inside a single DB transaction so an order either
- * lands completely (log + deduction + event) or not at all.
+ * After ADR-012, costs split into:
+ *   - per-colony: metal / food / science / military, locked to a `colonyId`
+ *   - global:     credits, locked to a `playerId`
+ *
+ * `deductCost` does both halves at once so the route handler stays terse.
  */
 
 export class OrderError extends Error {
@@ -26,24 +34,8 @@ export interface IdempotentResult<T> {
   result: T;
 }
 
-export interface ResourceSnapshot {
-  metal: number;
-  energy: number;
-  science: number;
-  metalRate: number;
-  energyRate: number;
-  scienceRate: number;
-  updatedAt: number;
-}
-
 export type OrderTx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
-/**
- * Run `work` inside a transaction that first stamps an `orders_log`
- * row keyed by `orderId`. If a row already exists (the client retried
- * the same order), `work` is skipped and we return the prior insert
- * time so the caller can respond with "already applied."
- */
 export async function runIdempotentOrder<T>(
   playerId: string,
   orderId: string,
@@ -68,81 +60,168 @@ export async function runIdempotentOrder<T>(
   });
 }
 
-export async function loadResources(tx: OrderTx, playerId: string): Promise<ResourceSnapshot> {
+export interface ColonyResourceSnapshot {
+  colonyId: string;
+  metal: number;
+  food: number;
+  science: number;
+  military: number;
+  /** rates carried so we can rebase accumulators without losing them */
+  metalRate: number;
+  foodRate: number;
+  scienceRate: number;
+  militaryRate: number;
+  updatedAt: number;
+}
+
+export interface CreditsSnapshot {
+  credits: number;
+  rate: number;
+  updatedAt: number;
+}
+
+/**
+ * FOR UPDATE on the colony row + evaluates each accumulator at `now`.
+ * Throws `colony_not_found` if the row is missing.
+ */
+export async function loadColonyResources(
+  tx: OrderTx,
+  playerId: string,
+  colonyId: string,
+): Promise<ColonyResourceSnapshot> {
   const rows = await tx
     .select()
-    .from(playerResources)
-    .where(eq(playerResources.playerId, playerId))
+    .from(colonies)
+    .where(and(eq(colonies.id, colonyId), eq(colonies.ownerId, playerId)))
     .for("update")
     .limit(1);
   const row = rows[0];
   if (!row) {
-    throw new OrderError("no_resources", "Player has no resources row. Pick a home planet first.", 409);
+    throw new OrderError("colony_not_found", `No colony ${colonyId} for this player.`, 404);
   }
   const now = Date.now();
-  const metal = accumulatorAt(
-    { value: row.metalValue, rate: row.metalRate, t0: row.metalT0 },
-    now,
-  );
-  const energy = accumulatorAt(
-    { value: row.energyValue, rate: row.energyRate, t0: row.energyT0 },
-    now,
-  );
-  const science = accumulatorAt(
-    { value: row.scienceValue, rate: row.scienceRate, t0: row.scienceT0 },
-    now,
-  );
   return {
-    metal,
-    energy,
-    science,
+    colonyId,
+    metal: accumulatorAt({ value: row.metalValue, rate: row.metalRate, t0: row.metalT0 }, now),
+    food: accumulatorAt({ value: row.foodValue, rate: row.foodRate, t0: row.foodT0 }, now),
+    science: accumulatorAt(
+      { value: row.scienceValue, rate: row.scienceRate, t0: row.scienceT0 },
+      now,
+    ),
+    military: accumulatorAt(
+      { value: row.militaryValue, rate: row.militaryRate, t0: row.militaryT0 },
+      now,
+    ),
     metalRate: row.metalRate,
-    energyRate: row.energyRate,
+    foodRate: row.foodRate,
     scienceRate: row.scienceRate,
+    militaryRate: row.militaryRate,
+    updatedAt: now,
+  };
+}
+
+export async function loadCredits(tx: OrderTx, playerId: string): Promise<CreditsSnapshot> {
+  const rows = await tx
+    .select({
+      value: players.creditsValue,
+      rate: players.creditsRate,
+      t0: players.creditsT0,
+    })
+    .from(players)
+    .where(eq(players.id, playerId))
+    .for("update")
+    .limit(1);
+  const row = rows[0];
+  if (!row) {
+    throw new OrderError("player_not_found", "Player row missing.", 404);
+  }
+  const now = Date.now();
+  return {
+    credits: accumulatorAt({ value: row.value, rate: row.rate, t0: row.t0 }, now),
+    rate: row.rate,
     updatedAt: now,
   };
 }
 
 /**
- * Deduct `cost` from the player's resources. Assumes `loadResources`
- * has already been called in the same transaction so we hold the
- * FOR UPDATE lock. Throws `OrderError("insufficient_resources", ...)`
- * if any line item is short.
+ * Validate + deduct a `ResourceCost` atomically. Per-colony deductions
+ * read the source colony row; global credits deduct from `players`.
+ *
+ * Pass `colonyId` when the cost has any per-colony component.
  */
-export async function deductResources(
+export async function deductCost(
   tx: OrderTx,
   playerId: string,
-  snapshot: ResourceSnapshot,
   cost: ResourceCost,
-): Promise<void> {
-  const metalCost = cost.metal ?? 0;
-  const energyCost = cost.energy ?? 0;
-  const scienceCost = cost.science ?? 0;
+  colonyId: string | null,
+): Promise<{ colony: ColonyResourceSnapshot | null; credits: CreditsSnapshot | null }> {
+  const hasPerColony = PER_COLONY_RESOURCES.some((k) => (cost[k] ?? 0) > 0);
+  const hasCredits = (cost.credits ?? 0) > 0;
 
-  if (
-    snapshot.metal < metalCost ||
-    snapshot.energy < energyCost ||
-    snapshot.science < scienceCost
-  ) {
-    throw new OrderError(
-      "insufficient_resources",
-      `Need ${metalCost} metal, ${energyCost} energy, ${scienceCost} science. ` +
-        `Have ${Math.floor(snapshot.metal)} / ${Math.floor(snapshot.energy)} / ${Math.floor(snapshot.science)}.`,
-      409,
-    );
+  if (hasPerColony && !colonyId) {
+    throw new OrderError("colony_required", "This cost needs a source colony.", 400);
   }
 
-  await tx
-    .update(playerResources)
-    .set({
-      metalValue: snapshot.metal - metalCost,
-      metalT0: snapshot.updatedAt,
-      energyValue: snapshot.energy - energyCost,
-      energyT0: snapshot.updatedAt,
-      scienceValue: snapshot.science - scienceCost,
-      scienceT0: snapshot.updatedAt,
-    })
-    .where(eq(playerResources.playerId, playerId));
+  let colonySnap: ColonyResourceSnapshot | null = null;
+  if (hasPerColony && colonyId) {
+    colonySnap = await loadColonyResources(tx, playerId, colonyId);
+    const shortfalls: string[] = [];
+    for (const r of PER_COLONY_RESOURCES) {
+      const need = cost[r] ?? 0;
+      if (need > 0 && colonySnap[r] < need) {
+        shortfalls.push(`${need} ${r} (have ${Math.floor(colonySnap[r])})`);
+      }
+    }
+    if (shortfalls.length > 0) {
+      throw new OrderError(
+        "insufficient_resources",
+        `Colony short on: ${shortfalls.join(", ")}.`,
+        409,
+      );
+    }
+    await tx
+      .update(colonies)
+      .set(buildColonyDeductionPatch(colonySnap, cost))
+      .where(eq(colonies.id, colonyId));
+  }
+
+  let creditsSnap: CreditsSnapshot | null = null;
+  if (hasCredits) {
+    creditsSnap = await loadCredits(tx, playerId);
+    const need = cost.credits ?? 0;
+    if (creditsSnap.credits < need) {
+      throw new OrderError(
+        "insufficient_credits",
+        `Need ${need} credits (have ${Math.floor(creditsSnap.credits)}).`,
+        409,
+      );
+    }
+    await tx
+      .update(players)
+      .set({
+        creditsValue: creditsSnap.credits - need,
+        creditsT0: creditsSnap.updatedAt,
+      })
+      .where(eq(players.id, playerId));
+  }
+
+  return { colony: colonySnap, credits: creditsSnap };
+}
+
+function buildColonyDeductionPatch(
+  snap: ColonyResourceSnapshot,
+  cost: ResourceCost,
+): Partial<typeof colonies.$inferInsert> {
+  const patch: Partial<typeof colonies.$inferInsert> = {};
+  for (const r of PER_COLONY_RESOURCES) {
+    const need = cost[r] ?? 0;
+    if (need <= 0) continue;
+    const valueKey = `${r}Value` as `${PerColonyResource}Value`;
+    const t0Key = `${r}T0` as `${PerColonyResource}T0`;
+    (patch as Record<string, unknown>)[valueKey] = snap[r] - need;
+    (patch as Record<string, unknown>)[t0Key] = snap.updatedAt;
+  }
+  return patch;
 }
 
 export interface ScheduleEventArgs {

@@ -47,29 +47,27 @@ export const players = pgTable(
      * anything changed; the cron bumps it when it processes an event.
      */
     lastSimAt: bigint("last_sim_at", { mode: "number" }).notNull(),
+    /**
+     * Global credits accumulator. The only empire-wide resource (ADR-012);
+     * everything else lives per-colony on the `colonies` row.
+     * Rate is the sum of every trade hub's output across all colonies.
+     */
+    creditsValue: doublePrecision("credits_value").notNull().default(0),
+    creditsRate: doublePrecision("credits_rate").notNull().default(0),
+    creditsT0: bigint("credits_t0", { mode: "number" }).notNull(),
   },
   (t) => [index("players_last_active_idx").on(t.lastActiveAt)],
 );
 
 /**
- * Per-player accumulator rows. One row per player; rates/anchors get
- * rewritten when the set of rate-producing colonies/buildings changes.
+ * Colonies carry their own per-(metal/food/science/military) accumulators
+ * (ADR-012). Twelve columns is wide but it keeps the hot read path
+ * (one row per colony) join-free.
+ *
+ * `buildings` is a `jsonb` map of `{ buildingType: tierLevel }` for now;
+ * if SP-1b shows we need to query individual buildings, promote it to a
+ * proper child table.
  */
-export const playerResources = pgTable("player_resources", {
-  playerId: text("player_id")
-    .primaryKey()
-    .references(() => players.id, { onDelete: "cascade" }),
-  metalValue: doublePrecision("metal_value").notNull().default(0),
-  metalRate: doublePrecision("metal_rate").notNull().default(0),
-  metalT0: bigint("metal_t0", { mode: "number" }).notNull(),
-  energyValue: doublePrecision("energy_value").notNull().default(0),
-  energyRate: doublePrecision("energy_rate").notNull().default(0),
-  energyT0: bigint("energy_t0", { mode: "number" }).notNull(),
-  scienceValue: doublePrecision("science_value").notNull().default(0),
-  scienceRate: doublePrecision("science_rate").notNull().default(0),
-  scienceT0: bigint("science_t0", { mode: "number" }).notNull(),
-});
-
 export const colonies = pgTable(
   "colonies",
   {
@@ -88,6 +86,19 @@ export const colonies = pgTable(
       .$type<Record<string, number>>()
       .notNull()
       .default({}),
+    // Per-colony resource stockpiles.
+    metalValue: doublePrecision("metal_value").notNull().default(0),
+    metalRate: doublePrecision("metal_rate").notNull().default(0),
+    metalT0: bigint("metal_t0", { mode: "number" }).notNull(),
+    foodValue: doublePrecision("food_value").notNull().default(0),
+    foodRate: doublePrecision("food_rate").notNull().default(0),
+    foodT0: bigint("food_t0", { mode: "number" }).notNull(),
+    scienceValue: doublePrecision("science_value").notNull().default(0),
+    scienceRate: doublePrecision("science_rate").notNull().default(0),
+    scienceT0: bigint("science_t0", { mode: "number" }).notNull(),
+    militaryValue: doublePrecision("military_value").notNull().default(0),
+    militaryRate: doublePrecision("military_rate").notNull().default(0),
+    militaryT0: bigint("military_t0", { mode: "number" }).notNull(),
   },
   (t) => [
     index("colonies_owner_idx").on(t.ownerId),

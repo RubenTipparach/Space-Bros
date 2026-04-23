@@ -1,5 +1,5 @@
 {
-  "id": "13512fe8-afb9-40e4-a638-4d7b851737f2",
+  "id": "ce78e0c7-9f10-4474-9381-5a530f957977",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -70,6 +70,86 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'::jsonb"
+        },
+        "metal_value": {
+          "name": "metal_value",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "metal_rate": {
+          "name": "metal_rate",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "metal_t0": {
+          "name": "metal_t0",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "food_value": {
+          "name": "food_value",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "food_rate": {
+          "name": "food_rate",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "food_t0": {
+          "name": "food_t0",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "science_value": {
+          "name": "science_value",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "science_rate": {
+          "name": "science_rate",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "science_t0": {
+          "name": "science_t0",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "military_value": {
+          "name": "military_value",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "military_rate": {
+          "name": "military_rate",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "military_t0": {
+          "name": "military_t0",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
         }
       },
       "indexes": {
@@ -489,99 +569,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.player_resources": {
-      "name": "player_resources",
-      "schema": "",
-      "columns": {
-        "player_id": {
-          "name": "player_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "metal_value": {
-          "name": "metal_value",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "metal_rate": {
-          "name": "metal_rate",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "metal_t0": {
-          "name": "metal_t0",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "energy_value": {
-          "name": "energy_value",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "energy_rate": {
-          "name": "energy_rate",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "energy_t0": {
-          "name": "energy_t0",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "science_value": {
-          "name": "science_value",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "science_rate": {
-          "name": "science_rate",
-          "type": "double precision",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "science_t0": {
-          "name": "science_t0",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "player_resources_player_id_players_id_fk": {
-          "name": "player_resources_player_id_players_id_fk",
-          "tableFrom": "player_resources",
-          "tableTo": "players",
-          "columnsFrom": [
-            "player_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.players": {
       "name": "players",
       "schema": "",
@@ -620,6 +607,26 @@
         },
         "last_sim_at": {
           "name": "last_sim_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credits_value": {
+          "name": "credits_value",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "credits_rate": {
+          "name": "credits_rate",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "credits_t0": {
+          "name": "credits_t0",
           "type": "bigint",
           "primaryKey": false,
           "notNull": true

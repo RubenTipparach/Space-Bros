@@ -169,6 +169,7 @@ async function applyColonyFounded(tx: TickTx, event: EventRow) {
       })
       .where(eq(colonies.id, colonyId));
   } else {
+    // New outpost — zero rates everywhere; SP-1b's buildings light it up.
     await tx.insert(colonies).values({
       id: colonyId,
       ownerId: event.ownerId,
@@ -178,6 +179,10 @@ async function applyColonyFounded(tx: TickTx, event: EventRow) {
       populationValue: p.colonists,
       populationRate: 0,
       populationT0: now,
+      metalT0: now,
+      foodT0: now,
+      scienceT0: now,
+      militaryT0: now,
     });
 
     const player = await tx

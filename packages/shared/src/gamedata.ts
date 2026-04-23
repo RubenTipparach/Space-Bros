@@ -4,15 +4,9 @@ import type { TechId } from "./state.ts";
  * Minimal starter tech tree. Balance is intentionally rough — Chunk 8
  * expands this into a real research tree with prereqs and tiers.
  *
- * Costs are keyed by the same resource names as `PlayerState.resources`.
+ * Costs are keyed against `ResourceCost` below.
  * Durations are in **seconds** (real time).
  */
-
-export interface ResourceCost {
-  metal?: number;
-  energy?: number;
-  science?: number;
-}
 
 export interface TechDef {
   id: TechId;
@@ -32,10 +26,10 @@ export const TECHS: Record<string, TechDef> = {
     durationSeconds: 60,
     prereqs: [],
   },
-  better_reactors_1: {
-    id: "better_reactors_1",
-    name: "Better Reactors",
-    description: "Chunk 6b will wire this into a +50% energy rate.",
+  scientific_method: {
+    id: "scientific_method",
+    name: "Scientific Method",
+    description: "Placeholder — SP-2 expands the science branch.",
     cost: { science: 60 },
     durationSeconds: 90,
     prereqs: [],
@@ -60,9 +54,9 @@ export const TECHS: Record<string, TechDef> = {
     id: "terraform_basics",
     name: "Terraforming Basics",
     description: "Unlocks terraforming adjacent biomes.",
-    cost: { science: 200, energy: 100 },
+    cost: { science: 200, credits: 100 },
     durationSeconds: 420,
-    prereqs: ["better_reactors_1"],
+    prereqs: ["scientific_method"],
   },
 };
 
@@ -74,11 +68,41 @@ export function listTechs(): TechDef[] {
   return Object.values(TECHS);
 }
 
-/** Starting resource rates applied when a player founds their home colony. */
+/**
+ * Resource costs. Credits is the only global resource (ADR-012);
+ * metal/food/science/military are per-colony stockpiles.
+ */
+export interface ResourceCost {
+  /** per-colony */
+  metal?: number;
+  /** per-colony */
+  food?: number;
+  /** per-colony */
+  science?: number;
+  /** per-colony */
+  military?: number;
+  /** global */
+  credits?: number;
+}
+
+/** Resource keys, useful for iterating. */
+export const PER_COLONY_RESOURCES = ["metal", "food", "science", "military"] as const;
+export type PerColonyResource = (typeof PER_COLONY_RESOURCES)[number];
+
+/**
+ * Per §5.2 of GAMEPLAY.md: when a player founds their home colony,
+ * that colony starts with these per-colony rates and a small global
+ * credits trickle. Outposts (non-home colonies) start with all zero
+ * rates — buildings light them up.
+ */
 export const HOME_COLONY_RESOURCE_RATES = {
+  /** per-colony, applied to the home colony itself */
   metalPerSecond: 1.0,
-  energyPerSecond: 0.5,
-  sciencePerSecond: 0.5,
+  foodPerSecond: 0.5,
+  sciencePerSecond: 0.3,
+  militaryPerSecond: 0,
+  /** global */
+  creditsPerSecond: 0.1,
 } as const;
 
 // ---- Travel + colonization ------------------------------------------------
@@ -91,8 +115,11 @@ export const HOME_COLONY_RESOURCE_RATES = {
  */
 export const BASE_MINUTES_PER_LIGHT_YEAR = 5;
 
-/** Colony ship cost paid at launch. */
-export const COLONY_SHIP_COST: ResourceCost = { metal: 200, energy: 100 };
+/**
+ * Colony ship cost paid at launch. Local metal at the source colony
+ * plus global credits.
+ */
+export const COLONY_SHIP_COST: ResourceCost = { metal: 200, credits: 100 };
 
 /** Base colonists delivered per colony ship. */
 export const BASE_COLONISTS = 1000;

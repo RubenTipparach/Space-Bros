@@ -6,9 +6,8 @@ import { getCurrentUserId, UnauthorizedError } from "@/lib/auth";
 import { schema } from "@/lib/db/client";
 import {
   OrderError,
-  deductResources,
+  deductCost,
   findPendingEventOfKind,
-  loadResources,
   runIdempotentOrder,
   scheduleEvent,
 } from "@/lib/db/orders";
@@ -19,9 +18,11 @@ export const runtime = "nodejs";
 const StartResearchSchema = z.object({
   orderId: z.string().min(8).max(128),
   techId: z.string().min(1).max(64),
+  /** Colony to draw science from. Defaults to home (resolved server-side). */
+  colonyId: z.string().min(1).max(128).optional(),
 });
 
-const { research } = schema;
+const { research, players, colonies } = schema;
 
 export async function POST(request: Request) {
   try {
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
     if (!parsed.success) {
       return NextResponse.json({ error: "bad_request", issues: parsed.error.issues }, { status: 400 });
     }
-    const { orderId, techId } = parsed.data;
+    const { orderId, techId, colonyId: requestedColonyId } = parsed.data;
 
     const tech = getTech(techId);
     if (!tech) {
@@ -39,7 +40,34 @@ export async function POST(request: Request) {
     }
 
     const outcome = await runIdempotentOrder(userId, orderId, "start_research", parsed.data, async (tx) => {
-      // Already researched?
+      // Resolve colonyId: client-supplied or default to home.
+      let colonyId = requestedColonyId;
+      if (!colonyId) {
+        const playerRow = await tx
+          .select({ home: players.homeColonyId })
+          .from(players)
+          .where(eq(players.id, userId))
+          .limit(1);
+        colonyId = playerRow[0]?.home ?? undefined;
+        if (!colonyId) {
+          throw new OrderError(
+            "no_home_colony",
+            "Pick a home planet before researching.",
+            409,
+          );
+        }
+      } else {
+        // Verify the requested colony belongs to the player.
+        const owns = await tx
+          .select({ id: colonies.id })
+          .from(colonies)
+          .where(and(eq(colonies.id, colonyId), eq(colonies.ownerId, userId)))
+          .limit(1);
+        if (!owns[0]) {
+          throw new OrderError("colony_not_owned", "That colony isn't yours.", 404);
+        }
+      }
+
       const owned = await tx
         .select({ techId: research.techId })
         .from(research)
@@ -49,7 +77,6 @@ export async function POST(request: Request) {
         throw new OrderError("already_researched", "You have already researched that tech.", 409);
       }
 
-      // Prereqs met?
       if (tech.prereqs.length > 0) {
         const ownedPrereqRows = await tx
           .select({ techId: research.techId })
@@ -62,16 +89,14 @@ export async function POST(request: Request) {
         }
       }
 
-      // One research at a time.
       const inProgress = await findPendingEventOfKind(tx, userId, "research_complete");
       if (inProgress) {
         throw new OrderError("already_researching", "You are already researching something.", 409);
       }
 
-      const snapshot = await loadResources(tx, userId);
-      await deductResources(tx, userId, snapshot, tech.cost);
+      const { credits } = await deductCost(tx, userId, tech.cost, colonyId);
 
-      const now = snapshot.updatedAt;
+      const now = (credits?.updatedAt) ?? Date.now();
       const fireAt = now + tech.durationSeconds * 1000;
       const eventId = `evt_${orderId}`;
       await scheduleEvent(tx, {
@@ -79,13 +104,14 @@ export async function POST(request: Request) {
         kind: "research_complete",
         ownerId: userId,
         fireAt,
-        payload: { techId },
+        payload: { techId, colonyId },
       });
 
       return {
         eventId,
         fireAt,
         techId,
+        colonyId,
         durationSeconds: tech.durationSeconds,
       };
     });
