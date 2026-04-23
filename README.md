@@ -62,7 +62,8 @@ mechanics that make this work.
 - [ ] **Chunk 4c** — Real Clerk integration (plug into `lib/auth.ts`).
 - [x] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
 - [ ] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
-- [ ] **Chunk 6** — Order API: build, launch, research, terraform.
+- [x] **Chunk 6a** — Order API: start research (idempotent, deducts resources, schedules event).
+- [ ] **Chunk 6b** — Order API: build / launch / terraform.
 - [ ] **Chunk 7** — Realtime (SSE) + optimistic UI reconciliation.
 - [ ] **Chunk 8** — Research & terraforming trees (data-driven).
 - [ ] **Chunk 9** — Multi-player interactions: outposts on shared planets,

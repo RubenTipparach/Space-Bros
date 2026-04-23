@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getCurrentUserId, UnauthorizedError, isDevUser } from "@/lib/auth";
-import { getOrCreatePlayer, getPlayerHomeColony } from "@/lib/db/queries";
+import {
+  getCompletedResearch,
+  getOrCreatePlayer,
+  getPendingResearch,
+  getPlayerHomeColony,
+  getPlayerResources,
+} from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,7 +15,13 @@ export async function GET() {
   try {
     const userId = await getCurrentUserId();
     const player = await getOrCreatePlayer(userId);
-    const homeColony = player.homeColonyId ? await getPlayerHomeColony(userId) : null;
+
+    const [homeColony, resources, research, pendingResearch] = await Promise.all([
+      player.homeColonyId ? getPlayerHomeColony(userId) : Promise.resolve(null),
+      getPlayerResources(userId),
+      getCompletedResearch(userId),
+      getPendingResearch(userId),
+    ]);
 
     return NextResponse.json({
       player: {
@@ -20,6 +32,10 @@ export async function GET() {
         isDevUser: isDevUser(player.id),
       },
       homeColony,
+      resources,
+      research,
+      pendingResearch,
+      serverTime: Date.now(),
     });
   } catch (err) {
     return handleError(err);

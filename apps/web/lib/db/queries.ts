@@ -1,8 +1,8 @@
 import { and, eq } from "drizzle-orm";
-import type { Biome } from "@space-bros/shared";
+import { HOME_COLONY_RESOURCE_RATES, type Biome } from "@space-bros/shared";
 import { getDb, schema } from "./client";
 
-const { players, playerResources, colonies } = schema;
+const { players, playerResources, colonies, research, events } = schema;
 
 export interface PlayerRow {
   id: string;
@@ -69,6 +69,57 @@ export async function getPlayerHomeColony(userId: string): Promise<ColonyRow | n
   return rows[0] ? toColonyRow(rows[0]) : null;
 }
 
+export interface ResourcesView {
+  metal: { value: number; rate: number; t0: number };
+  energy: { value: number; rate: number; t0: number };
+  science: { value: number; rate: number; t0: number };
+}
+
+export async function getPlayerResources(userId: string): Promise<ResourcesView | null> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(playerResources)
+    .where(eq(playerResources.playerId, userId))
+    .limit(1);
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    metal: { value: r.metalValue, rate: r.metalRate, t0: r.metalT0 },
+    energy: { value: r.energyValue, rate: r.energyRate, t0: r.energyT0 },
+    science: { value: r.scienceValue, rate: r.scienceRate, t0: r.scienceT0 },
+  };
+}
+
+export async function getCompletedResearch(userId: string): Promise<string[]> {
+  const db = getDb();
+  const rows = await db
+    .select({ techId: research.techId })
+    .from(research)
+    .where(eq(research.playerId, userId));
+  return rows.map((r) => r.techId);
+}
+
+export interface PendingResearch {
+  techId: string;
+  eventId: string;
+  fireAt: number;
+}
+
+export async function getPendingResearch(userId: string): Promise<PendingResearch | null> {
+  const db = getDb();
+  const rows = await db
+    .select({ id: events.id, fireAt: events.fireAt, payload: events.payload })
+    .from(events)
+    .where(and(eq(events.ownerId, userId), eq(events.kind, "research_complete")))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const techId = (row.payload as { techId?: string } | null)?.techId;
+  if (!techId) return null;
+  return { techId, eventId: row.id, fireAt: row.fireAt };
+}
+
 /**
  * Found a player's home colony atomically:
  *   - must not already have a home
@@ -128,6 +179,20 @@ export async function foundHomeColony(args: {
       .returning();
 
     await tx.update(players).set({ homeColonyId: colonyId }).where(eq(players.id, args.userId));
+
+    // Seed resource production. Pre-home the player has zero rates;
+    // founding the capital unlocks the baseline economy.
+    await tx
+      .update(playerResources)
+      .set({
+        metalRate: HOME_COLONY_RESOURCE_RATES.metalPerSecond,
+        metalT0: now,
+        energyRate: HOME_COLONY_RESOURCE_RATES.energyPerSecond,
+        energyT0: now,
+        scienceRate: HOME_COLONY_RESOURCE_RATES.sciencePerSecond,
+        scienceT0: now,
+      })
+      .where(eq(playerResources.playerId, args.userId));
 
     return toColonyRow(colony!);
   });

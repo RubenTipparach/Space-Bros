@@ -19,9 +19,31 @@ export interface HomeColony {
   populationT0: number;
 }
 
+export interface AccumulatorView {
+  value: number;
+  rate: number;
+  t0: number;
+}
+
+export interface ResourcesView {
+  metal: AccumulatorView;
+  energy: AccumulatorView;
+  science: AccumulatorView;
+}
+
+export interface PendingResearch {
+  techId: string;
+  eventId: string;
+  fireAt: number;
+}
+
 export interface MeResponse {
   player: PlayerSummary;
   homeColony: HomeColony | null;
+  resources: ResourcesView | null;
+  research: string[];
+  pendingResearch: PendingResearch | null;
+  serverTime: number;
 }
 
 export interface ApiError {
@@ -38,9 +60,14 @@ export interface PlayerState {
     starId: number,
     planetIndex: number,
   ) => Promise<{ ok: true } | { ok: false; error: ApiError }>;
+  startResearch: (techId: string) => Promise<{ ok: true } | { ok: false; error: ApiError }>;
 }
 
 const DEFAULT_POLL_MS = 15_000;
+
+function newOrderId(): string {
+  return (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+}
 
 export function usePlayer(pollMs: number = DEFAULT_POLL_MS): PlayerState {
   const [data, setData] = useState<MeResponse | null>(null);
@@ -94,6 +121,24 @@ export function usePlayer(pollMs: number = DEFAULT_POLL_MS): PlayerState {
     return { ok: true };
   }, [refresh]);
 
+  const startResearch = useCallback<PlayerState["startResearch"]>(async (techId) => {
+    const r = await fetch("/api/orders/research", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ orderId: newOrderId(), techId }),
+    });
+    if (!r.ok) {
+      const body = (await r.json().catch(() => ({}))) as Partial<ApiError>;
+      return {
+        ok: false,
+        error: { error: body.error ?? `http_${r.status}`, message: body.message },
+      };
+    }
+    await refresh();
+    return { ok: true };
+  }, [refresh]);
+
   useEffect(() => {
     mounted.current = true;
     refresh();
@@ -111,5 +156,5 @@ export function usePlayer(pollMs: number = DEFAULT_POLL_MS): PlayerState {
     };
   }, [refresh, pollMs]);
 
-  return { data, error, loading, refresh, pickHome };
+  return { data, error, loading, refresh, pickHome, startResearch };
 }
