@@ -57,8 +57,8 @@ mechanics that make this work.
 - [ ] **Chunk 2** — Three.js galaxy viewer: instanced stars, tap-to-select,
   mobile-first controls.
 - [ ] **Chunk 3** — Sim core: accumulators, event queue, pure `processEvent`.
-- [ ] **Chunk 4** — Persistence + auth: Postgres schema, Clerk, home-planet
-  pick flow.
+- [x] **Chunk 4a** — Postgres schema + Drizzle setup (migrations, client).
+- [ ] **Chunk 4b** — Clerk auth + `/api/me` + home-planet pick flow.
 - [ ] **Chunk 5** — Tick worker: `/api/tick` Vercel Cron + `SKIP LOCKED` drain.
 - [ ] **Chunk 6** — Order API: build, launch, research, terraform.
 - [ ] **Chunk 7** — Realtime (SSE) + optimistic UI reconciliation.
@@ -93,6 +93,32 @@ pnpm typecheck
 pnpm test
 pnpm dev           # http://localhost:3000
 ```
+
+### Database (Neon + Drizzle)
+
+The schema lives in `apps/web/lib/db/schema.ts`; SQL migrations are
+generated into `apps/web/lib/db/migrations/`.
+
+Set up a Neon project, copy the **pooled** connection string into
+`apps/web/.env.local`:
+
+```bash
+cp apps/web/.env.example apps/web/.env.local
+# edit DATABASE_URL
+```
+
+Then run migrations:
+
+```bash
+pnpm --filter web db:migrate     # apply migrations to the DB
+# or while iterating on schema:
+pnpm --filter web db:generate    # regenerate SQL from schema.ts
+pnpm --filter web db:studio      # open the Drizzle inspector
+```
+
+The app lazily constructs its DB client — `pnpm build` / `pnpm dev` still
+work without `DATABASE_URL` set, and any route that actually touches the
+DB will fail loudly with a clear error.
 
 ## Open questions (before Chunk 4)
 
