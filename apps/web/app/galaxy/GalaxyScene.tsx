@@ -1,10 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
 import { generateGalaxy, type Star } from "@space-bros/shared";
-import { Stars } from "./Stars";
+import { MapRoot } from "./MapRoot";
 import { SystemView } from "./SystemView";
 import { ResearchPanel } from "./ResearchPanel";
 import { ResourcesHud } from "./ResourcesHud";
@@ -26,10 +24,9 @@ function parseStarFromPlanetId(planetId: string): number | null {
 
 export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
   const galaxy = useMemo(() => generateGalaxy({ seed, starCount }), [seed, starCount]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedStar, setSelectedStar] = useState<Star | null>(null);
   const player = usePlayer();
 
-  const selected = selectedId !== null ? galaxy.stars[selectedId] : undefined;
   const me = player.data;
   const hasHome = Boolean(me?.player?.homeColonyId);
 
@@ -40,9 +37,6 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
   }, [me]);
 
   const inFlightPlanetIds = useMemo(() => {
-    // For v1 the colony_founded event payload lives server-side, so
-    // the best we can do from the client is "there's a fleet heading
-    // to this star" — good enough to stop double-launching.
     const set = new Set<string>();
     if (!me) return set;
     for (const f of me.fleets) {
@@ -55,29 +49,7 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
 
   return (
     <div className="scene">
-      <Canvas
-        camera={{ position: [0, 180, 320], fov: 55, near: 0.1, far: 4000 }}
-        dpr={[1, 2]}
-        gl={{ antialias: true, alpha: false }}
-        onCreated={({ gl }) => gl.setClearColor("#05060a")}
-      >
-        <ambientLight intensity={0.4} />
-        <Stars
-          galaxy={galaxy}
-          selectedId={selectedId}
-          onSelect={(s: Star) => setSelectedId(s.id)}
-        />
-        <OrbitControls
-          makeDefault
-          enablePan
-          enableDamping
-          dampingFactor={0.08}
-          rotateSpeed={0.6}
-          zoomSpeed={0.8}
-          maxDistance={1200}
-          minDistance={20}
-        />
-      </Canvas>
+      <MapRoot galaxy={galaxy} onSelectStar={setSelectedStar} />
 
       <header className="hud">
         <h1>
@@ -93,7 +65,9 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
             {me.player.displayName}
             {me.player.isDevUser ? <span className="dev-badge">dev</span> : null}
             {" · "}
-            {hasHome ? `${me.colonies.length} ${me.colonies.length === 1 ? "colony" : "colonies"}` : "pick a home planet"}
+            {hasHome
+              ? `${me.colonies.length} ${me.colonies.length === 1 ? "colony" : "colonies"}`
+              : "pick a home planet"}
           </p>
         ) : player.loading ? (
           <p className="muted">loading player…</p>
@@ -102,7 +76,7 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
         ) : null}
         {me ? <ResourcesHud me={me} /> : null}
         <p className="muted hint">
-          Drag to orbit · pinch / scroll to zoom · tap a star
+          Click a sector to zoom · tap a star at cluster level for details
         </p>
         {IS_OFFLINE ? (
           <button
@@ -122,10 +96,10 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
       {me && hasHome ? <ResearchPanel me={me} startResearch={player.startResearch} /> : null}
       {me ? <FleetsHud me={me} /> : null}
 
-      {selected ? (
+      {selectedStar ? (
         <SystemView
-          star={selected}
-          onClose={() => setSelectedId(null)}
+          star={selectedStar}
+          onClose={() => setSelectedStar(null)}
           canPickHome={me != null && !hasHome}
           pickHome={player.pickHome}
           launchColony={player.launchColony}

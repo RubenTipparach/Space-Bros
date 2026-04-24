@@ -116,9 +116,11 @@ const BIOME_HABITABILITY: Record<Biome, number> = {
 };
 
 /**
- * Three.js-Journey-style spiral galaxy position. Stars cluster into
- * `branches` arms with tangential randomness that falls off sharply
- * toward the arm spine.
+ * Top-down log spiral, Three.js-Journey-style. Uniform radius so stars
+ * fill the disk; spin is normalized by max radius so the arms wrap a
+ * fixed number of turns regardless of scale. Perpendicular jitter uses
+ * `randomnessPower` to concentrate stars near the arm spine — most
+ * stars hug the arm, a few strays spread into the dust.
  */
 function spiralStarPosition(
   rng: Rng,
@@ -132,22 +134,22 @@ function spiralStarPosition(
     randomnessPower: number;
   },
 ): { x: number; y: number; z: number; radius: number } {
-  const r = Math.pow(rng(), opts.randomnessPower) * opts.radius;
+  // Uniform radius — fills the disk evenly.
+  const r = rng() * opts.radius;
   const branchAngle = ((starIndex % opts.branches) / opts.branches) * Math.PI * 2;
-  const spinAngle = r * opts.spin;
+  // Spin normalized: total wind at the rim = opts.spin radians.
+  const spinAngle = (r / opts.radius) * opts.spin;
 
   const sign = () => (rng() < 0.5 ? 1 : -1);
+  // Absolute jitter scaled by max radius (not r), so the pow^power
+  // concentration is what spreads the arm — not r itself.
   const jitter = (scale: number) =>
-    Math.pow(rng(), opts.randomnessPower) * opts.randomness * r * scale * sign();
-
-  const rx = jitter(1);
-  const ry = jitter(0.35); // flatter vertically than horizontally
-  const rz = jitter(1);
+    Math.pow(rng(), opts.randomnessPower) * opts.randomness * opts.radius * scale * sign();
 
   return {
-    x: Math.cos(branchAngle + spinAngle) * r + rx,
-    y: ry + (rng() - 0.5) * opts.thickness * (1 - r / opts.radius) * 0.3,
-    z: Math.sin(branchAngle + spinAngle) * r + rz,
+    x: Math.cos(branchAngle + spinAngle) * r + jitter(1),
+    y: jitter(0.08), // very thin vertically
+    z: Math.sin(branchAngle + spinAngle) * r + jitter(1),
     radius: r,
   };
 }
