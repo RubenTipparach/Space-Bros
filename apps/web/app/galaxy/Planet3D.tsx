@@ -18,8 +18,10 @@ interface Props {
   size: number;
   isHover: boolean;
   isSelected: boolean;
+  /** Freezes the orbit update when true — used while the planet is focused. */
+  orbitPaused: boolean;
   onHover: (planet: Planet | null) => void;
-  onClick: (planet: Planet) => void;
+  onClick: (planet: Planet, worldPos: THREE.Vector3) => void;
 }
 
 /**
@@ -37,6 +39,7 @@ export function Planet3D({
   size,
   isHover,
   isSelected,
+  orbitPaused,
   onHover,
   onClick,
 }: Props) {
@@ -63,18 +66,24 @@ export function Planet3D({
   const speed = Math.min(0.45, 0.55 / Math.max(0.3, planet.orbitAu));
   const phase = planet.index * 1.3;
 
-  useFrame(({ clock }) => {
+  // Accumulated orbit angle so pausing doesn't snap the planet back
+  // to t=0 when resumed — we just stop advancing it.
+  const orbitT = useRef(phase);
+
+  useFrame((state, delta) => {
     const g = groupRef.current;
     if (!g) return;
-    const t = clock.getElapsedTime() * speed + phase;
+    const { clock } = state;
+    const dt = Math.min(0.1, delta);
+    if (!orbitPaused) {
+      orbitT.current += dt * speed;
+    }
+    const t = orbitT.current;
     g.position.x = Math.cos(t) * orbitRadius;
     g.position.z = Math.sin(t) * orbitRadius;
     g.position.y = 0;
-    // Slow self-rotation so the surface noise doesn't look frozen.
     g.rotation.y += 0.004;
 
-    // Update shader uniforms with the star position (world-space so
-    // the directional lighting tracks the sun even as planets move).
     const lightPos = surfaceMat.uniforms.uLightPos;
     if (lightPos) lightPos.value = sunWorldPos;
     if (cloudsMat) {
@@ -106,7 +115,9 @@ export function Planet3D({
         <primitive object={atmoMat} attach="material" />
       </mesh>
 
-      {/* Invisible slightly-larger hit mesh so grazing clicks still register. */}
+      {/* Invisible wider hit mesh so grazing clicks still register.
+          Sized generously (1.6×) since planets are small targets when
+          the camera is pulled back far enough to see the whole system. */}
       <mesh
         scale={highlightScale}
         onPointerOver={(e: ThreeEvent<PointerEvent>) => {
@@ -121,10 +132,15 @@ export function Planet3D({
         }}
         onClick={(e: ThreeEvent<MouseEvent>) => {
           e.stopPropagation();
-          onClick(planet);
+          // Grab the planet's current world position so the caller
+          // can frame the camera on it — planets orbit so a later
+          // lookup would point at the wrong place.
+          const worldPos = new THREE.Vector3();
+          (e.object as THREE.Object3D).getWorldPosition(worldPos);
+          onClick(planet, worldPos);
         }}
       >
-        <sphereGeometry args={[size * 1.15, 20, 12]} />
+        <sphereGeometry args={[size * 1.6, 20, 12]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
     </group>

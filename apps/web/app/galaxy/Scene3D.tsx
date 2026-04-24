@@ -21,7 +21,14 @@ interface Props {
   homeStarId?: number | null;
 }
 
-type ViewLevel = "galaxy" | "sector" | "cluster" | "group" | "star" | "solar";
+type ViewLevel =
+  | "galaxy"
+  | "sector"
+  | "cluster"
+  | "group"
+  | "star"
+  | "solar"
+  | "planet";
 
 export function Scene3D({ galaxy, homeStarId }: Props) {
   const r = galaxy.radius;
@@ -38,18 +45,26 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
   const [inSolarSystem, setInSolarSystem] = useState(false);
   const [hoveredPlanetId, setHoveredPlanetId] = useState<string | null>(null);
   const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
+  // World position of the selected planet at click time. The planet's
+  // orbit is paused while selected (see SolarSystem3D), so this stays
+  // accurate until the player deselects.
+  const [selectedPlanetPos, setSelectedPlanetPos] =
+    useState<THREE.Vector3 | null>(null);
 
-  const viewLevel: ViewLevel = inSolarSystem
-    ? "solar"
-    : selectedStarId != null
-    ? "star"
-    : selectedGroup
-    ? "group"
-    : selectedCluster
-    ? "cluster"
-    : selectedSector
-    ? "sector"
-    : "galaxy";
+  const viewLevel: ViewLevel =
+    inSolarSystem && selectedPlanet
+      ? "planet"
+      : inSolarSystem
+      ? "solar"
+      : selectedStarId != null
+      ? "star"
+      : selectedGroup
+      ? "group"
+      : selectedCluster
+      ? "cluster"
+      : selectedSector
+      ? "sector"
+      : "galaxy";
 
   const sectorBounds = useMemo(() => computeSectorBounds(galaxy), [galaxy]);
   const borders = useMemo(() => extractBorders(galaxy), [galaxy]);
@@ -93,6 +108,9 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
 
   // Target + distance per viewLevel.
   const focusTarget = useMemo(() => {
+    if (inSolarSystem && selectedPlanet && selectedPlanetPos) {
+      return selectedPlanetPos;
+    }
     if (inSolarSystem && selectedStarId != null) {
       const s = galaxy.stars[selectedStarId];
       if (s) return new THREE.Vector3(s.x, s.y, s.z);
@@ -113,6 +131,8 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     return defaultTarget;
   }, [
     inSolarSystem,
+    selectedPlanet,
+    selectedPlanetPos,
     selectedStarId,
     selectedGroup,
     selectedCluster,
@@ -122,6 +142,11 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
   ]);
 
   const focusDistance = useMemo(() => {
+    if (inSolarSystem && selectedPlanet) {
+      // Planet radii run 1.7–4.6 after the V-2.9 scale bump. A fixed
+      // distance of ~14 frames any planet tightly without clipping.
+      return Math.max(10, selectedPlanet.size * 6.5);
+    }
     if (inSolarSystem && selectedStarId != null) {
       const s = galaxy.stars[selectedStarId];
       if (s) return Math.max(8, solarSystemMaxOrbit(s) * 2.4);
@@ -141,6 +166,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     return defaultDistance;
   }, [
     inSolarSystem,
+    selectedPlanet,
     selectedStarId,
     selectedGroup,
     selectedCluster,
@@ -161,9 +187,16 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
   }, [viewLevel, focusDistance]);
 
   const popLevel = () => {
+    if (inSolarSystem && selectedPlanet) {
+      setSelectedPlanet(null);
+      setSelectedPlanetPos(null);
+      setHoveredPlanetId(null);
+      return;
+    }
     if (inSolarSystem) {
       setInSolarSystem(false);
       setSelectedPlanet(null);
+      setSelectedPlanetPos(null);
       setHoveredPlanetId(null);
       return;
     }
@@ -335,7 +368,10 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
             hoveredPlanetId={hoveredPlanetId}
             selectedPlanetId={selectedPlanet?.id ?? null}
             onHoverPlanet={(p) => setHoveredPlanetId(p?.id ?? null)}
-            onSelectPlanet={setSelectedPlanet}
+            onSelectPlanet={(p, pos) => {
+              setSelectedPlanet(p);
+              setSelectedPlanetPos(pos.clone());
+            }}
           />
         ) : null}
 

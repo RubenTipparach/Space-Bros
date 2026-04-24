@@ -8,29 +8,29 @@ import { Sun3D } from "./Sun3D";
 
 interface Props {
   star: Star;
-  onSelectPlanet: (planet: Planet) => void;
+  onSelectPlanet: (planet: Planet, worldPos: THREE.Vector3) => void;
   hoveredPlanetId: string | null;
   selectedPlanetId: string | null;
   onHoverPlanet: (planet: Planet | null) => void;
 }
 
 /**
- * One star + its planets as a real 3D solar system. Everything is
- * procedurally shaded in GLSL (no textures) so it works with just the
- * static site build. Planets come out per-biome: each has a surface
- * shader, optional cloud layer, and an additive Fresnel atmosphere
- * shell.
+ * Solar system view. Sun + orbits + per-planet procedural shader.
  *
- * Scale: 1 AU → AU_SCALE world units. MIN_ORBIT keeps the innermost
- * planet clear of the sun. `solarSystemMaxOrbit` is used by the
- * camera framer so wide systems aren't cropped.
+ * Planet sizes were bumped 4× per user ask so they're easy to click
+ * even with the camera framing the whole system. Min orbit bumped
+ * so the inner planet doesn't overlap the sun corona. Orbit rings
+ * use two layers (sharp inner + wide soft glow) so the geometry of
+ * the system is readable at a glance.
  */
 
 export const AU_SCALE = 3.2;
-export const STAR_SIZE = 1.8;
-export const MIN_ORBIT = 0.9 * AU_SCALE;
-const PLANET_SIZE_MIN = 0.42;
-const PLANET_SIZE_SCALE = 0.28;
+export const STAR_SIZE = 2.2;
+export const MIN_ORBIT = 9;
+const PLANET_SIZE_MIN = 1.7;
+const PLANET_SIZE_BASE = 1.8;
+/** Largest allowed planet radius — keeps even gas giants clear of neighbours. */
+const PLANET_SIZE_MAX = 4.6;
 
 export function solarSystemMaxOrbit(star: Star): number {
   let max = MIN_ORBIT;
@@ -41,6 +41,13 @@ export function solarSystemMaxOrbit(star: Star): number {
   return max;
 }
 
+function planetSize(planet: Planet): number {
+  return Math.min(
+    PLANET_SIZE_MAX,
+    Math.max(PLANET_SIZE_MIN, planet.size * PLANET_SIZE_BASE),
+  );
+}
+
 export function SolarSystem3D({
   star,
   onSelectPlanet,
@@ -48,9 +55,6 @@ export function SolarSystem3D({
   selectedPlanetId,
   onHoverPlanet,
 }: Props) {
-  // The solar-system group sits at the star's galactic-plane position.
-  // The star itself is at local origin; `sunWorldPos` = the group's
-  // world translation so planet shaders can compute real light-dir.
   const sunWorldPos = useMemo(
     () => new THREE.Vector3(star.x, star.y, star.z),
     [star.x, star.y, star.z],
@@ -64,15 +68,13 @@ export function SolarSystem3D({
         <OrbitRing
           key={`ring-${planet.id}`}
           radius={Math.max(MIN_ORBIT, planet.orbitAu * AU_SCALE)}
+          highlighted={selectedPlanetId === planet.id || hoveredPlanetId === planet.id}
         />
       ))}
 
       {star.planets.map((planet) => {
         const orbitRadius = Math.max(MIN_ORBIT, planet.orbitAu * AU_SCALE);
-        const size = Math.max(
-          PLANET_SIZE_MIN,
-          planet.size * PLANET_SIZE_SCALE * 1.6,
-        );
+        const size = planetSize(planet);
         return (
           <Planet3D
             key={planet.id}
@@ -82,6 +84,7 @@ export function SolarSystem3D({
             size={size}
             isHover={hoveredPlanetId === planet.id}
             isSelected={selectedPlanetId === planet.id}
+            orbitPaused={selectedPlanetId === planet.id}
             onHover={onHoverPlanet}
             onClick={onSelectPlanet}
           />
@@ -91,18 +94,38 @@ export function SolarSystem3D({
   );
 }
 
-function OrbitRing({ radius }: { radius: number }) {
+function OrbitRing({ radius, highlighted }: { radius: number; highlighted: boolean }) {
+  // Two rings per orbit: a crisp bright inner line + a wide soft
+  // glow. Highlighted (hovered / selected planet's orbit) is more
+  // saturated so the player can see which orbit they're engaging.
+  const sharpColor = highlighted ? "#e6f2ff" : "#aec7ff";
+  const haloColor = highlighted ? "#aec7ff" : "#6f8fc2";
+  const sharpOpacity = highlighted ? 0.95 : 0.55;
+  const haloOpacity = highlighted ? 0.32 : 0.14;
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]}>
-      <ringGeometry args={[radius - 0.03, radius + 0.03, 96]} />
-      <meshBasicMaterial
-        color="#8ab4ff"
-        transparent
-        opacity={0.18}
-        side={THREE.DoubleSide}
-        depthWrite={false}
-        toneMapped={false}
-      />
-    </mesh>
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[radius - 0.12, radius + 0.12, 160]} />
+        <meshBasicMaterial
+          color={sharpColor}
+          transparent
+          opacity={sharpOpacity}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[radius - 0.6, radius + 0.6, 160]} />
+        <meshBasicMaterial
+          color={haloColor}
+          transparent
+          opacity={haloOpacity}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
   );
 }
