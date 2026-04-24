@@ -7,15 +7,22 @@ import type { Cluster, Galaxy, Sector, Star } from "@space-bros/shared";
 
 // ---- Colors ---------------------------------------------------------------
 
-/** 7 visually-distinct hues assigned by sector index. */
+/**
+ * 10 visually-distinct hues — 4 Core quadrants (warm) + 6 outer sectors
+ * (cool to warm). Assigned by sector index in the order generateSectors
+ * returns them.
+ */
 export const SECTOR_COLORS: readonly string[] = [
-  "#d4a03e", // gold (Core)
-  "#3a7fd0", // blue
-  "#c94f5f", // red
-  "#4fb56a", // green
-  "#8b6fd4", // purple
-  "#d48a47", // orange
-  "#4fb8c8", // teal
+  "#ffb04a", // Core North  – gold
+  "#ff8a3d", // Core East   – orange
+  "#e16a5f", // Core South  – coral
+  "#d4a03e", // Core West   – amber
+  "#3a7fd0", // outer 1     – blue
+  "#c94f5f", // outer 2     – red
+  "#4fb56a", // outer 3     – green
+  "#8b6fd4", // outer 4     – purple
+  "#d48a47", // outer 5     – orange
+  "#4fb8c8", // outer 6     – teal
 ];
 
 export function sectorColor(sector: Sector, sectors: readonly Sector[]): string {
@@ -62,31 +69,23 @@ export function galaxyBounds(galaxy: Galaxy, pad = 1.0): Bounds {
   return { minX: -r, minZ: -r, maxX: r, maxZ: r };
 }
 
-/**
- * Bounding box around a sector wedge. We sample 64 points along the arc
- * from innerRadius to galaxyRadius and take their min/max — simpler
- * than computing the exact rectangle analytically, and stable for any
- * wedge geometry (including wrap-around).
- */
-export function sectorBounds(
-  sector: Sector,
-  galaxy: Galaxy,
-  pad = 1.15,
-): Bounds {
-  if (sector.kind === "core") {
-    const r = galaxy.radius * 0.18 * pad; // CORE_INNER_RADIUS_FRACTION
-    return { minX: -r, minZ: -r, maxX: r, maxZ: r };
-  }
-  const wedge = sector.wedge!;
-  const innerR = galaxy.radius * sector.innerRadius;
-  const outerR = galaxy.radius;
+function normAngle(a: number): number {
+  const TWO_PI = Math.PI * 2;
+  return ((a % TWO_PI) + TWO_PI) % TWO_PI;
+}
 
+function wedgeSpan(wedge: { start: number; end: number }): number {
+  const raw = wedge.end - wedge.start;
+  return raw >= 0 ? raw : raw + Math.PI * 2;
+}
+
+export function sectorBounds(sector: Sector, galaxy: Galaxy, pad = 1.15): Bounds {
+  const innerR = galaxy.radius * sector.innerR;
+  const outerR = galaxy.radius * sector.outerR;
+  const wedge = sector.wedge;
+  const span = wedgeSpan(wedge);
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
   const samples = 64;
-  const TWO_PI = Math.PI * 2;
-  let span = wedge.end - wedge.start;
-  if (span < 0) span += TWO_PI;
-
   for (let i = 0; i <= samples; i++) {
     const t = i / samples;
     const angle = wedge.start + t * span;
@@ -99,25 +98,21 @@ export function sectorBounds(
       if (z > maxZ) maxZ = z;
     }
   }
-  // Pad and square up so we don't squish the aspect ratio.
+  // If this is a Core quadrant the inner radius is 0; include the
+  // vertex at the center too.
+  if (sector.innerR === 0) {
+    minX = Math.min(minX, 0);
+    minZ = Math.min(minZ, 0);
+    maxX = Math.max(maxX, 0);
+    maxZ = Math.max(maxZ, 0);
+  }
   const cx = (minX + maxX) / 2;
   const cz = (minZ + maxZ) / 2;
-  const half = Math.max(maxX - minX, maxZ - minZ) / 2 * pad;
-  return {
-    minX: cx - half,
-    minZ: cz - half,
-    maxX: cx + half,
-    maxZ: cz + half,
-  };
+  const half = (Math.max(maxX - minX, maxZ - minZ) / 2) * pad;
+  return { minX: cx - half, minZ: cz - half, maxX: cx + half, maxZ: cz + half };
 }
 
-export function clusterBounds(
-  cluster: Cluster,
-  _galaxy: Galaxy,
-  pad = 1.4,
-): Bounds {
-  // Show a window around the cluster center big enough to see its spread
-  // plus some surrounding empty space for context.
+export function clusterBounds(cluster: Cluster, _galaxy: Galaxy, pad = 1.4): Bounds {
   const half = cluster.spread * 4 * pad;
   return {
     minX: cluster.center.x - half,
@@ -127,12 +122,10 @@ export function clusterBounds(
   };
 }
 
-/** `viewBox` attribute string for an SVG sized to these bounds. */
 export function viewBox(b: Bounds): string {
   return `${b.minX} ${b.minZ} ${b.maxX - b.minX} ${b.maxZ - b.minZ}`;
 }
 
-/** Map a galaxy (x, z) to canvas pixel coords given the current bounds. */
 export function project(
   x: number,
   z: number,
@@ -145,59 +138,90 @@ export function project(
   return { px: u * width, py: v * height };
 }
 
-// ---- Sector wedge path ----------------------------------------------------
+// ---- Sector wedge path (organic, noise-perturbed boundary) ---------------
 
 /**
- * Build an SVG path for an annular sector (wedge with a hole for the
- * Core). Works for wrap-around wedges too.
+ * Deterministic hash → small integer seed used for sector boundary
+ * perturbation. Two sectors with the same name shouldn't exist, but we
+ * hash the id just in case.
  */
-export function wedgePath(
-  sector: Sector,
-  galaxy: Galaxy,
-): string {
-  if (sector.kind === "core") {
-    const r = galaxy.radius * 0.18; // CORE_INNER_RADIUS_FRACTION
-    return `M ${r},0 A ${r},${r} 0 1 1 -${r},0 A ${r},${r} 0 1 1 ${r},0 Z`;
+function sectorSeed(sector: Sector): number {
+  let h = 2166136261;
+  for (let i = 0; i < sector.id.length; i++) {
+    h ^= sector.id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
   }
-  const wedge = sector.wedge!;
-  const innerR = galaxy.radius * sector.innerRadius;
-  const outerR = galaxy.radius;
-  let start = wedge.start;
-  let end = wedge.end;
-  let span = end - start;
-  if (span < 0) span += Math.PI * 2;
-  const largeArc = span > Math.PI ? 1 : 0;
+  return (h >>> 0) % 1_000_000;
+}
 
-  const x1 = Math.cos(start) * innerR;
-  const y1 = Math.sin(start) * innerR;
-  const x2 = Math.cos(start) * outerR;
-  const y2 = Math.sin(start) * outerR;
-  const x3 = Math.cos(end) * outerR;
-  const y3 = Math.sin(end) * outerR;
-  const x4 = Math.cos(end) * innerR;
-  const y4 = Math.sin(end) * innerR;
+/**
+ * Multi-harmonic noisy radius. 3 sin waves at different frequencies,
+ * phased by the sector's seed, modulating the base radius by ±8%.
+ * Smooth, continuous, seeded per-sector — same sector always wobbles
+ * the same way.
+ */
+function noisyRadius(baseR: number, angle: number, seed: number, amplitude: number): number {
+  const s = seed * 0.001;
+  const a1 = Math.sin(angle * 3 + s * 2.3) * amplitude;
+  const a2 = Math.sin(angle * 5 + s * 5.7) * amplitude * 0.55;
+  const a3 = Math.sin(angle * 9 + s * 7.1) * amplitude * 0.25;
+  return baseR * (1 + a1 + a2 + a3);
+}
 
-  return [
-    `M ${x1},${y1}`,
-    `L ${x2},${y2}`,
-    `A ${outerR},${outerR} 0 ${largeArc} 1 ${x3},${y3}`,
-    `L ${x4},${y4}`,
-    `A ${innerR},${innerR} 0 ${largeArc} 0 ${x1},${y1}`,
-    `Z`,
-  ].join(" ");
+/**
+ * Build an SVG path for a sector as a perturbed-polygon annular
+ * sector. 48 points along the outer arc + 32 along the inner arc (or
+ * a single point at center for Core quadrants).
+ */
+export function wedgePath(sector: Sector, galaxy: Galaxy): string {
+  const seed = sectorSeed(sector);
+  const innerR = galaxy.radius * sector.innerR;
+  const outerR = galaxy.radius * sector.outerR;
+  const wedge = sector.wedge;
+  const span = wedgeSpan(wedge);
+  const outerSamples = 48;
+  const innerSamples = 24;
+  const outerAmp = sector.kind === "outer" ? 0.06 : 0.08;
+  const innerAmp = sector.kind === "outer" ? 0.05 : 0;
+
+  const points: [number, number][] = [];
+
+  // Outer arc — perturbed. Walk start → end.
+  for (let i = 0; i <= outerSamples; i++) {
+    const t = i / outerSamples;
+    const angle = wedge.start + t * span;
+    const r = noisyRadius(outerR, angle, seed, outerAmp);
+    points.push([Math.cos(angle) * r, Math.sin(angle) * r]);
+  }
+
+  if (sector.innerR === 0) {
+    // Core quadrant — close through the origin.
+    points.push([0, 0]);
+  } else {
+    // Inner arc — perturbed. Walk end → start (reverse direction).
+    for (let i = 0; i <= innerSamples; i++) {
+      const t = i / innerSamples;
+      const angle = wedge.end - t * span;
+      const r = noisyRadius(innerR, angle, seed + 17, innerAmp);
+      points.push([Math.cos(angle) * r, Math.sin(angle) * r]);
+    }
+  }
+
+  let d = `M ${points[0]![0]},${points[0]![1]}`;
+  for (let i = 1; i < points.length; i++) {
+    d += ` L ${points[i]![0]},${points[i]![1]}`;
+  }
+  d += " Z";
+  return d;
 }
 
 /** Geometric center of a sector wedge for label placement. */
 export function sectorCenter(sector: Sector, galaxy: Galaxy): { x: number; z: number } {
-  if (sector.kind === "core") return { x: 0, z: 0 };
-  const wedge = sector.wedge!;
-  const innerR = galaxy.radius * sector.innerRadius;
-  const outerR = galaxy.radius;
-  let mid = (wedge.start + wedge.end) / 2;
-  // Handle wrap-around wedge (start > end means it crossed 2π).
-  if (wedge.end < wedge.start) mid = (wedge.start + wedge.end + Math.PI * 2) / 2;
-  const r = (innerR + outerR) / 2;
-  return { x: Math.cos(mid) * r, z: Math.sin(mid) * r };
+  const wedge = sector.wedge;
+  const span = wedgeSpan(wedge);
+  const mid = normAngle(wedge.start + span / 2);
+  const rCenter = galaxy.radius * (sector.innerR + sector.outerR) / 2;
+  return { x: Math.cos(mid) * rCenter, z: Math.sin(mid) * rCenter };
 }
 
 // ---- Dust particle generation --------------------------------------------
@@ -209,14 +233,7 @@ export interface DustParticle {
   color: string;
 }
 
-/**
- * Pre-computed dust scattered along the spiral arms with extra jitter.
- * Done once per galaxy, independent of zoom level. Not persisted —
- * regenerated from the galaxy seed on mount.
- */
 export function generateDust(galaxy: Galaxy, count: number): DustParticle[] {
-  // Simple deterministic LCG seeded from the galaxy seed so dust is
-  // stable across reloads. We don't reuse rngFromSeed to avoid coupling.
   let seed = 0;
   const s = String(galaxy.seed);
   for (let i = 0; i < s.length; i++) seed = (seed * 31 + s.charCodeAt(i)) >>> 0;
@@ -224,21 +241,45 @@ export function generateDust(galaxy: Galaxy, count: number): DustParticle[] {
     seed = (seed * 1664525 + 1013904223) >>> 0;
     return seed / 0x100000000;
   };
+  const gauss = () => {
+    let u = 0;
+    let v = 0;
+    while (u === 0) u = rng();
+    while (v === 0) v = rng();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
 
   const result: DustParticle[] = [];
   const radius = galaxy.radius;
-  const branches = 3; // match galaxy default
-  const spin = 6;
+  const branches = 4;
+  const spin = 3.2;
   for (let i = 0; i < count; i++) {
-    const r = rng() * radius;
-    const branch = ((i % branches) / branches) * Math.PI * 2;
-    const spinAngle = (r / radius) * spin;
-    const jitterScale = 0.85 + rng() * 0.5; // wider spread than stars
-    const sign = () => (rng() < 0.5 ? 1 : -1);
-    const jitter = () => Math.pow(rng(), 2) * 0.45 * radius * sign() * jitterScale;
-    const x = Math.cos(branch + spinAngle) * r + jitter();
-    const z = Math.sin(branch + spinAngle) * r + jitter();
-    // Color tint: warm near center, cool at rim.
+    // Blend of disk + arm dust. 40% pure disk, 60% arm-aligned.
+    let x: number;
+    let z: number;
+    if (rng() < 0.4) {
+      // Disk
+      const r = Math.pow(rng(), 0.8) * radius;
+      const theta = rng() * Math.PI * 2;
+      x = Math.cos(theta) * r;
+      z = Math.sin(theta) * r;
+    } else {
+      // Arm
+      const softBranchF = rng() * branches;
+      const branchIdx = Math.floor(softBranchF);
+      const branchJitter = ((softBranchF - branchIdx) - 0.5) * 0.7;
+      const branchAngle =
+        ((branchIdx + branchJitter) / branches) * Math.PI * 2;
+      const r = rng() * radius;
+      const swirl = (r / radius) * spin;
+      const angle = branchAngle + swirl;
+      const perpJitter = gauss() * (r * 0.28 + radius * 0.06);
+      const perpAngle = angle + Math.PI / 2;
+      x = Math.cos(angle) * r + Math.cos(perpAngle) * perpJitter;
+      z = Math.sin(angle) * r + Math.sin(perpAngle) * perpJitter;
+    }
+
+    const r = Math.hypot(x, z);
     const t = Math.min(1, r / radius);
     const red = Math.round(230 - t * 110);
     const green = Math.round(180 - t * 70);
@@ -246,7 +287,7 @@ export function generateDust(galaxy: Galaxy, count: number): DustParticle[] {
     result.push({
       x,
       z,
-      alpha: 0.05 + rng() * 0.12,
+      alpha: 0.04 + rng() * 0.12,
       color: `rgba(${red}, ${green}, ${blue},`,
     });
   }

@@ -49,13 +49,29 @@ body {
   inset: 0;
   display: grid;
   place-items: center;
+  perspective: 1800px;
+  perspective-origin: 50% 55%;
+  touch-action: none;
+  cursor: grab;
 }
 
-.map {
+.map-viewport:active {
+  cursor: grabbing;
+}
+
+.map-stage {
   position: relative;
   width: min(100vmin, 100%);
   height: min(100vmin, 100%);
   aspect-ratio: 1 / 1;
+  transform-origin: center center;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
 }
 
 .map-canvas {

@@ -41,16 +41,13 @@ export interface Star {
   z: number;
   spectralClass: SpectralClass;
   planets: Planet[];
-  /** Sector id from the seeded sector dictionary. */
   sectorId: string;
-  /** Cluster id this star belongs to. Every star has one. */
   clusterId: string;
 }
 
 export interface Galaxy {
   seed: number | string;
   generatorVersion: number;
-  /** Radius of the galaxy disk in light-years. */
   radius: number;
   stars: Star[];
   sectors: Sector[];
@@ -62,22 +59,18 @@ export interface GenerateGalaxyOptions {
   starCount: number;
   radius?: number;
   thickness?: number;
-  /** Spiral branches — 2 major arms + 2 minor arms = 4 by default. */
+  /** Arm count. 4 gives clear structure without obvious streaks. */
   branches?: number;
-  /** Spiral tightness. radius × spin = spinAngle. */
+  /** Total swirl (radians) from center to rim. */
   spin?: number;
-  /** 0..1 tangential jitter relative to radius. */
+  /** Gaussian jitter magnitude as a fraction of radius. */
   randomness?: number;
-  /** Higher = stars hug the arm spine more tightly. */
+  /** Legacy knob — currently unused by the 3-pass generator. */
   randomnessPower?: number;
 }
 
-/**
- * Bumped to 2 for V-1 — we now emit sectors + clusters + tagged stars,
- * so stored data keyed by the old galaxy (e.g. `planet_overlays`) may
- * need backfill. No prod data exists yet so this is free today.
- */
-export const GENERATOR_VERSION = 2;
+/** Bumped each time the generator's output shape meaningfully changes. */
+export const GENERATOR_VERSION = 3;
 
 const SPECTRAL_WEIGHTS: readonly (readonly [SpectralClass, number])[] = [
   ["O", 0.0001],
@@ -115,42 +108,104 @@ const BIOME_HABITABILITY: Record<Biome, number> = {
   toxic: 0.05,
 };
 
+// ---- Three-pass star position generator ----------------------------------
+
 /**
- * Top-down log spiral, Three.js-Journey-style. Uniform radius so stars
- * fill the disk; spin is normalized by max radius so the arms wrap a
- * fixed number of turns regardless of scale. Perpendicular jitter uses
- * `randomnessPower` to concentrate stars near the arm spine — most
- * stars hug the arm, a few strays spread into the dust.
+ * Box-Muller-ish gaussian draw. Returns a standard-normal sample.
+ * Sufficient for dust / jitter; not cryptographic.
  */
-function spiralStarPosition(
+function gaussian(rng: Rng): number {
+  let u = 0;
+  let v = 0;
+  while (u === 0) u = rng();
+  while (v === 0) v = rng();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+interface XYZ {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * Core bulge — tight gaussian around (0, 0) with a small vertical
+ * thickness. Creates the bright central clump.
+ */
+function corePosition(rng: Rng, radius: number, thickness: number): XYZ {
+  const sigma = radius * 0.08;
+  return {
+    x: gaussian(rng) * sigma,
+    y: gaussian(rng) * thickness * 0.12,
+    z: gaussian(rng) * sigma,
+  };
+}
+
+/**
+ * Disk scatter — exponential falloff in radius + uniform angle. Fills
+ * the space between spiral arms with soft background stars, which is
+ * what actually kills the "rigid branches" look.
+ */
+function diskPosition(rng: Rng, radius: number, thickness: number): XYZ {
+  // Exponential with scale 0.38 × radius → most stars inside mid-disk,
+  // long tail to the rim. Capped so the tail doesn't go past the rim.
+  let r = 0;
+  for (let tries = 0; tries < 8; tries++) {
+    r = -Math.log(1 - rng()) * radius * 0.38;
+    if (r < radius) break;
+    r = rng() * radius;
+  }
+  const theta = rng() * Math.PI * 2;
+  return {
+    x: Math.cos(theta) * r,
+    y: gaussian(rng) * thickness * 0.08,
+    z: Math.sin(theta) * r,
+  };
+}
+
+/**
+ * Arm star — straight-line branch with soft assignment + gaussian
+ * perpendicular jitter, then a "swirl" rotates the point by an amount
+ * proportional to its radius. This is the classic
+ * straight-arms-then-bend technique (Devans, Beltoforion) and avoids
+ * the single-radial-streak artifact of pure pow-based spirals.
+ */
+function armPosition(
   rng: Rng,
-  starIndex: number,
   opts: {
     radius: number;
     thickness: number;
     branches: number;
     spin: number;
     randomness: number;
-    randomnessPower: number;
   },
-): { x: number; y: number; z: number; radius: number } {
-  // Uniform radius — fills the disk evenly.
+): XYZ {
+  // Soft branch assignment: pick a fractional branch with jitter in
+  // branch-space so stars near a boundary can drift into the next arm.
+  const softBranchF = rng() * opts.branches;
+  const branchIdx = Math.floor(softBranchF);
+  const branchJitter = ((softBranchF - branchIdx) - 0.5) * 0.6; // ±0.3
+  const branchAngle =
+    ((branchIdx + branchJitter) / opts.branches) * Math.PI * 2;
+
+  // Uniform r; per-area density is higher near the core automatically.
   const r = rng() * opts.radius;
-  const branchAngle = ((starIndex % opts.branches) / opts.branches) * Math.PI * 2;
-  // Spin normalized: total wind at the rim = opts.spin radians.
-  const spinAngle = (r / opts.radius) * opts.spin;
 
-  const sign = () => (rng() < 0.5 ? 1 : -1);
-  // Absolute jitter scaled by max radius (not r), so the pow^power
-  // concentration is what spreads the arm — not r itself.
-  const jitter = (scale: number) =>
-    Math.pow(rng(), opts.randomnessPower) * opts.randomness * opts.radius * scale * sign();
+  // Gaussian along-radius perturbation (small) and perpendicular jitter
+  // (the one that smears the arm). perpendicular scales with r, so core
+  // arms are tight and rim arms fan out.
+  const radialJitter = gaussian(rng) * opts.radius * 0.02;
+  const perpJitter = gaussian(rng) * (r * opts.randomness + opts.radius * 0.04);
 
+  const swirl = (r / Math.max(1, opts.radius)) * opts.spin;
+  const angle = branchAngle + swirl;
+  const perpAngle = angle + Math.PI / 2;
+
+  const eR = r + radialJitter;
   return {
-    x: Math.cos(branchAngle + spinAngle) * r + jitter(1),
-    y: jitter(0.08), // very thin vertically
-    z: Math.sin(branchAngle + spinAngle) * r + jitter(1),
-    radius: r,
+    x: Math.cos(angle) * eR + Math.cos(perpAngle) * perpJitter,
+    y: gaussian(rng) * opts.thickness * 0.08,
+    z: Math.sin(angle) * eR + Math.sin(perpAngle) * perpJitter,
   };
 }
 
@@ -177,9 +232,8 @@ export function generateGalaxy(opts: GenerateGalaxyOptions): Galaxy {
   const radius = opts.radius ?? 500;
   const thickness = opts.thickness ?? 40;
   const branches = opts.branches ?? 4;
-  const spin = opts.spin ?? 1.2;
-  const randomness = opts.randomness ?? 0.35;
-  const randomnessPower = opts.randomnessPower ?? 3;
+  const spin = opts.spin ?? 3.2;
+  const randomness = opts.randomness ?? 0.18;
 
   const sectors = generateSectors(seed);
   const clusters = generateClusters({ seed, sectors, galaxyRadius: radius });
@@ -187,47 +241,38 @@ export function generateGalaxy(opts: GenerateGalaxyOptions): Galaxy {
   const rng = rngFromSeed(seed);
   const stars: Star[] = new Array(starCount);
 
-  // First pass: place stars, assign sector + cluster. We pull stars
-  // toward the nearest cluster center so the hierarchy feels real.
+  // Allocation: 18% core bulge, 28% disk background, 54% arms.
+  const coreCount = Math.floor(starCount * 0.18);
+  const diskCount = Math.floor(starCount * 0.28);
+
   for (let i = 0; i < starCount; i++) {
-    const pos = spiralStarPosition(rng, i, {
-      radius,
-      thickness,
-      branches,
-      spin,
-      randomness,
-      randomnessPower,
-    });
+    let pos: XYZ;
+    if (i < coreCount) {
+      pos = corePosition(rng, radius, thickness);
+    } else if (i < coreCount + diskCount) {
+      pos = diskPosition(rng, radius, thickness);
+    } else {
+      pos = armPosition(rng, { radius, thickness, branches, spin, randomness });
+    }
+
+    // Clamp stars to the disk so nothing escapes the visible galaxy.
+    const r = Math.hypot(pos.x, pos.z);
+    if (r > radius) {
+      const s = radius / r;
+      pos.x *= s;
+      pos.z *= s;
+    }
 
     const sector = classifyPosition(pos.x, pos.z, radius, sectors);
-
-    // Find the closest cluster in this sector; if one exists, bias the
-    // star's position slightly toward the cluster center (keeps clumps
-    // visible while preserving arm structure).
     let cluster = classifyClusterForStar(pos.x, pos.z, sector.id, clusters);
-    if (!cluster && sector.id !== "core") {
-      // Fallback: closest cluster anywhere (edge cases at wedge boundaries).
-      cluster = classifyClusterForStar(pos.x, pos.z, "core", clusters);
-    }
-    if (!cluster) {
-      // Shouldn't happen with non-zero clusters, but stay resilient.
-      cluster = clusters[0]!;
-    }
-
-    // Pull 20% toward cluster center for visible clumping.
-    const pullX = cluster.center.x - pos.x;
-    const pullZ = cluster.center.z - pos.z;
-    const dist = Math.hypot(pullX, pullZ);
-    const pullFactor = 0.2 * Math.min(1, dist / Math.max(1, cluster.spread * 3));
-    const x = pos.x + pullX * pullFactor;
-    const z = pos.z + pullZ * pullFactor;
+    if (!cluster) cluster = clusters[0]!;
 
     const spectralClass = weightedPick(rng, SPECTRAL_WEIGHTS);
     stars[i] = {
       id: i,
-      x,
+      x: pos.x,
       y: pos.y,
-      z,
+      z: pos.z,
       spectralClass,
       planets: generatePlanets(rng, i),
       sectorId: sector.id,
