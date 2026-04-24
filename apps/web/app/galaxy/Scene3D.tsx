@@ -151,31 +151,14 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     defaultDistance,
   ]);
 
-  // Parent focus distance used by the zoom-out-pop detector.
-  const parentFocusDistance = useMemo(() => {
-    if (inSolarSystem) return Math.max(r * 0.02, 6);                    // → star
-    if (selectedStarId != null) return Math.max(r * 0.035, 12);         // → group
-    if (selectedGroup) {
-      const count = selectedCluster?.groupIds.length ?? 1;
-      return Math.max(r * 0.08, Math.sqrt(count) * r * 0.03);           // → cluster
-    }
-    if (selectedCluster && selectedSector) {
-      const b = sectorBounds.get(selectedSector.id);
-      const span = b ? Math.max(b.maxX - b.minX, b.maxZ - b.minZ) : r;
-      return Math.max(r * 0.18, span * 1.3);                            // → sector
-    }
-    if (selectedSector) return defaultDistance;                         // → galaxy
-    return Infinity; // already at galaxy
-  }, [
-    inSolarSystem,
-    selectedStarId,
-    selectedGroup,
-    selectedCluster,
-    selectedSector,
-    sectorBounds,
-    r,
-    defaultDistance,
-  ]);
+  // Distance above which "zoom out" triggers the popper. Set to
+  // 1.6 × the current level's own focus distance so zooming back out
+  // past your own frame by a comfortable margin pops you up.
+  // Infinity at galaxy level (no parent to pop to).
+  const zoomOutTrigger = useMemo(() => {
+    if (viewLevel === "galaxy") return Infinity;
+    return focusDistance * 1.6;
+  }, [viewLevel, focusDistance]);
 
   const popLevel = () => {
     if (inSolarSystem) {
@@ -355,11 +338,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
         ) : null}
 
         <CameraFocus target={focusTarget} distance={focusDistance} pitch={0.55} />
-        <ZoomOutPopper
-          threshold={parentFocusDistance}
-          target={focusTarget}
-          onPop={popLevel}
-        />
+        <ZoomOutPopper triggerDistance={zoomOutTrigger} onPop={popLevel} />
 
         <OrbitControls
           makeDefault
@@ -394,39 +373,42 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
 }
 
 interface ZoomOutPopperProps {
-  threshold: number;
-  target: THREE.Vector3;
+  /** Camera distance above which we start counting toward a pop. */
+  triggerDistance: number;
   onPop: () => void;
 }
 
 /**
- * Monitors camera distance to the current focus target. Once the
- * distance passes 1.35 × parent's focus distance for ~20 consecutive
- * frames (~0.3 s), pops up one level. Hysteresis + frame count prevent
- * the camera-animation undershoot from firing spurious pops.
+ * Watches the orbit-controls camera distance. Once the user has
+ * scrolled further out than `triggerDistance` for ~15 consecutive
+ * frames (~0.25 s), pops up one level.
+ *
+ * Frame-count hysteresis keeps brief overshoots from firing, but we
+ * intentionally drop the "has CameraFocus settled?" gate that the
+ * previous revision had — the one-shot CameraFocus releases control
+ * once it lands, so any sustained big distance after that is a real
+ * user zoom-out.
  */
-function ZoomOutPopper({ threshold, target, onPop }: ZoomOutPopperProps) {
+function ZoomOutPopper({ triggerDistance, onPop }: ZoomOutPopperProps) {
   const camera = useThree((s) => s.camera);
   const controls = useThree(
     (s) => s.controls as unknown as { target: THREE.Vector3 } | null,
   );
   const frames = useRef(0);
-  const trigger = threshold * 1.35;
 
   useFrame(() => {
-    if (!Number.isFinite(threshold) || trigger <= 0) {
+    if (!controls) {
       frames.current = 0;
       return;
     }
-    if (!controls) return;
+    if (!Number.isFinite(triggerDistance) || triggerDistance <= 0) {
+      frames.current = 0;
+      return;
+    }
     const dist = camera.position.distanceTo(controls.target);
-    // Only start counting once we're past the trigger distance AND
-    // the controls target has already settled on the intended focus
-    // target (otherwise mid-animation readings would mislead us).
-    const settled = controls.target.distanceToSquared(target) < 1;
-    if (settled && dist > trigger) {
+    if (dist > triggerDistance) {
       frames.current += 1;
-      if (frames.current >= 20) {
+      if (frames.current >= 15) {
         frames.current = 0;
         onPop();
       }
