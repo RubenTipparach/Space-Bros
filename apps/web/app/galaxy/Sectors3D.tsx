@@ -14,6 +14,8 @@ interface Props {
   onSelectSector: (sector: Sector) => void;
   sectorEdges: Float32Array;
   rimEdges: Float32Array;
+  /** If false, fills still render but hover/click are disabled. */
+  active: boolean;
 }
 
 interface SectorMeshData {
@@ -31,6 +33,7 @@ export function Sectors3D({
   onSelectSector,
   sectorEdges,
   rimEdges,
+  active,
 }: Props) {
   const sectorMeshes = useMemo<SectorMeshData[]>(() => {
     const clusterById = new Map(galaxy.clusters.map((c) => [c.id, c]));
@@ -120,26 +123,27 @@ export function Sectors3D({
   return (
     <group position={[0, -0.4, 0]}>
       {sectorMeshes.map(({ sector, color, geometry }) => {
-        const isHover = hoveredSectorId === sector.id;
+        const isHover = active && hoveredSectorId === sector.id;
         const isSelected = selectedSectorId === sector.id;
-        // Dim the selected sector's fill so Clusters3D's sub-territory
-        // tints read through. Unselected-and-hovered get a boost.
         const opacity = isSelected ? 0.06 : isHover ? 0.26 : 0.16;
         return (
           <mesh
             key={sector.id}
             geometry={geometry}
             onPointerOver={(e: ThreeEvent<PointerEvent>) => {
+              if (!active) return;
               e.stopPropagation();
               onHoverSector(sector);
               document.body.style.cursor = "pointer";
             }}
             onPointerOut={(e: ThreeEvent<PointerEvent>) => {
+              if (!active) return;
               e.stopPropagation();
               onHoverSector(null);
               document.body.style.cursor = "";
             }}
             onClick={(e: ThreeEvent<MouseEvent>) => {
+              if (!active) return;
               e.stopPropagation();
               onSelectSector(sector);
             }}

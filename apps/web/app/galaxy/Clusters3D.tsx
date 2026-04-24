@@ -13,8 +13,9 @@ interface Props {
   selectedClusterId: string | null;
   onHoverCluster: (cluster: Cluster | null) => void;
   onSelectCluster: (cluster: Cluster) => void;
-  /** Cluster border edges inside this sector — from borders.extractBorders. */
   clusterEdges: Float32Array | undefined;
+  /** When false, fills render but hover/click are ignored. */
+  active: boolean;
 }
 
 interface ClusterMeshData {
@@ -40,6 +41,7 @@ export function Clusters3D({
   onHoverCluster,
   onSelectCluster,
   clusterEdges,
+  active,
 }: Props) {
   const sectorIdx = galaxy.sectors.findIndex((s) => s.id === sector.id);
   const baseColor = SECTOR_COLORS[sectorIdx % SECTOR_COLORS.length]!;
@@ -107,24 +109,29 @@ export function Clusters3D({
   return (
     <group position={[0, -0.2, 0]}>
       {clusterMeshes.map(({ cluster, color, geometry }) => {
-        const isHover = hoveredClusterId === cluster.id;
+        const isHover = active && hoveredClusterId === cluster.id;
         const isSelected = selectedClusterId === cluster.id;
-        const opacity = isSelected ? 0.52 : isHover ? 0.42 : 0.28;
+        // When the cluster is selected we dim its fill so Groups3D's
+        // sub-territories read through clearly.
+        const opacity = isSelected ? 0.1 : isHover ? 0.42 : 0.28;
         return (
           <mesh
             key={cluster.id}
             geometry={geometry}
             onPointerOver={(e: ThreeEvent<PointerEvent>) => {
+              if (!active) return;
               e.stopPropagation();
               onHoverCluster(cluster);
               document.body.style.cursor = "pointer";
             }}
             onPointerOut={(e: ThreeEvent<PointerEvent>) => {
+              if (!active) return;
               e.stopPropagation();
               onHoverCluster(null);
               document.body.style.cursor = "";
             }}
             onClick={(e: ThreeEvent<MouseEvent>) => {
+              if (!active) return;
               e.stopPropagation();
               onSelectCluster(cluster);
             }}

@@ -36,10 +36,14 @@ export function CameraFocus({ target, distance, pitch = 0.55 }: Props) {
 
   useFrame(() => {
     if (!controls || !target || distance == null) return;
-    const lerpFactor = 0.09;
+    // Snappier than before (was 0.09). Snap to target when within
+    // epsilon so the animation finishes cleanly.
+    const lerpFactor = 0.22;
 
-    // Lerp the orbit target.
     controls.target.lerp(target, lerpFactor);
+    if (controls.target.distanceToSquared(target) < 0.25) {
+      controls.target.copy(target);
+    }
 
     // Compute the desired camera position: keep the current azimuth
     // (x/z direction from target) but pitch it up and scale to the
@@ -63,6 +67,9 @@ export function CameraFocus({ target, distance, pitch = 0.55 }: Props) {
     ).add(controls.target);
 
     camera.position.lerp(desired, lerpFactor);
+    if (camera.position.distanceToSquared(desired) < 0.25) {
+      camera.position.copy(desired);
+    }
     controls.update();
   });
 

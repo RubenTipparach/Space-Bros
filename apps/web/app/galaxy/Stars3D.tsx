@@ -9,6 +9,10 @@ import { SPECTRAL_POINT_SIZE, SPECTRAL_RGB } from "./palette";
 interface Props {
   galaxy: Galaxy;
   onSelectStar: (star: Star) => void;
+  /** When false, clicks are ignored. */
+  active: boolean;
+  /** When provided, only stars in this set count as clickable. */
+  selectableStarIds?: ReadonlySet<number> | null;
 }
 
 /**
@@ -22,7 +26,7 @@ interface Props {
  * Raycasting uses the default Points threshold; `onPointerDown` returns
  * an `event.index` which we map back to the star list.
  */
-export function Stars3D({ galaxy, onSelectStar }: Props) {
+export function Stars3D({ galaxy, onSelectStar, active, selectableStarIds }: Props) {
   const { positions, colors, sizes } = useMemo(() => {
     const n = galaxy.stars.length;
     const positions = new Float32Array(n * 3);
@@ -84,12 +88,13 @@ export function Stars3D({ galaxy, onSelectStar }: Props) {
   }, []);
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
+    if (!active) return;
     if (e.index == null) return;
     const star = galaxy.stars[e.index];
-    if (star) {
-      e.stopPropagation();
-      onSelectStar(star);
-    }
+    if (!star) return;
+    if (selectableStarIds && !selectableStarIds.has(star.id)) return;
+    e.stopPropagation();
+    onSelectStar(star);
   };
 
   return (

@@ -26,8 +26,10 @@ export interface BorderData {
   sectorEdges: Float32Array;
   /** galactic rim edges */
   rimEdges: Float32Array;
-  /** cluster-vs-cluster borders, grouped by sector id */
+  /** cluster-vs-cluster borders, keyed by the owning sector id */
   clusterEdgesBySector: Map<string, Float32Array>;
+  /** group-vs-group borders (same cluster, different groups), keyed by cluster id */
+  groupEdgesByCluster: Map<string, Float32Array>;
 }
 
 interface EdgeEntry {
@@ -81,6 +83,7 @@ export function extractBorders(galaxy: Galaxy): BorderData {
   const sectorEdgeList: number[] = [];
   const rimEdgeList: number[] = [];
   const clusterEdgeListsBySector = new Map<string, number[]>();
+  const groupEdgeListsByCluster = new Map<string, number[]>();
 
   for (const entry of edgeMap.values()) {
     const pushEdge = (target: number[]) => {
@@ -88,7 +91,6 @@ export function extractBorders(galaxy: Galaxy): BorderData {
     };
 
     if (entry.groupIds.length === 1) {
-      // Rim edge — other neighbour was clipped away at the disc.
       pushEdge(rimEdgeList);
       continue;
     }
@@ -100,27 +102,38 @@ export function extractBorders(galaxy: Galaxy): BorderData {
     if (m1.sectorId !== m2.sectorId) {
       pushEdge(sectorEdgeList);
     } else if (m1.clusterId !== m2.clusterId) {
-      // Both groups in the same sector but different clusters —
-      // file under the owning sector so Clusters3D can grab just its
-      // sector's cluster borders.
       let list = clusterEdgeListsBySector.get(m1.sectorId);
       if (!list) {
         list = [];
         clusterEdgeListsBySector.set(m1.sectorId, list);
       }
       pushEdge(list);
+    } else {
+      // Same sector + same cluster but different group = inter-group
+      // border. File under the cluster so Groups3D can grab just the
+      // borders that matter for its selected cluster.
+      let list = groupEdgeListsByCluster.get(m1.clusterId);
+      if (!list) {
+        list = [];
+        groupEdgeListsByCluster.set(m1.clusterId, list);
+      }
+      pushEdge(list);
     }
-    // else: internal (same cluster), skip entirely.
   }
 
   const clusterEdgesBySector = new Map<string, Float32Array>();
   for (const [sid, arr] of clusterEdgeListsBySector) {
     clusterEdgesBySector.set(sid, new Float32Array(arr));
   }
+  const groupEdgesByCluster = new Map<string, Float32Array>();
+  for (const [cid, arr] of groupEdgeListsByCluster) {
+    groupEdgesByCluster.set(cid, new Float32Array(arr));
+  }
 
   return {
     sectorEdges: new Float32Array(sectorEdgeList),
     rimEdges: new Float32Array(rimEdgeList),
     clusterEdgesBySector,
+    groupEdgesByCluster,
   };
 }
