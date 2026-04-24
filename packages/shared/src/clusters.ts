@@ -44,8 +44,8 @@ export interface Cluster {
 }
 
 const DEFAULT_COUNTS: Record<Sector["kind"], number> = {
-  core: 2,
-  outer: 3,
+  core: 4,
+  outer: 6,
 };
 
 export interface GenerateClustersOptions {

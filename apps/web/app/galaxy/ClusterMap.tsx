@@ -11,17 +11,19 @@ import {
   spectralCss,
   viewBox,
 } from "./map-helpers";
+import { renderHomeMarker } from "./GalaxyMap";
 
 interface Props {
   galaxy: Galaxy;
   sector: Sector;
   cluster: Cluster;
   onSelectStar: (star: Star) => void;
+  homeStarId?: number | null;
 }
 
 const CANVAS_SIZE = 1200;
 
-export function ClusterMap({ galaxy, sector, cluster, onSelectStar }: Props) {
+export function ClusterMap({ galaxy, sector, cluster, onSelectStar, homeStarId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bounds = useMemo(() => clusterBounds(cluster, galaxy, 1.3), [cluster, galaxy]);
   const dust = useMemo(() => generateDust(galaxy, 12_000), [galaxy]);
@@ -152,6 +154,9 @@ export function ClusterMap({ galaxy, sector, cluster, onSelectStar }: Props) {
             </g>
           );
         })}
+        {homeStarId !== undefined && homeStarId !== null
+          ? renderHomeMarker(galaxy, homeStarId, "cluster")
+          : null}
       </svg>
       {clusterStars.length === 0 ? (
         <div className="empty-cluster">

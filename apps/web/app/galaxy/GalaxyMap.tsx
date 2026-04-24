@@ -17,11 +17,12 @@ import {
 interface Props {
   galaxy: Galaxy;
   onSelectSector: (sector: Sector) => void;
+  homeStarId?: number | null;
 }
 
 const CANVAS_SIZE = 1200;
 
-export function GalaxyMap({ galaxy, onSelectSector }: Props) {
+export function GalaxyMap({ galaxy, onSelectSector, homeStarId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bounds = useMemo(() => galaxyBounds(galaxy, 1.02), [galaxy]);
   const dust = useMemo(() => generateDust(galaxy, 30_000), [galaxy]);
@@ -73,6 +74,10 @@ export function GalaxyMap({ galaxy, onSelectSector }: Props) {
         {galaxy.sectors.map((sector) => {
           const color = sectorColor(sector, galaxy.sectors);
           const center = sectorCenter(sector, galaxy);
+          const fontSize =
+            sector.kind === "core"
+              ? galaxy.radius * 0.026
+              : galaxy.radius * 0.045;
           return (
             <g
               key={sector.id}
@@ -95,7 +100,7 @@ export function GalaxyMap({ galaxy, onSelectSector }: Props) {
                 textAnchor="middle"
                 dominantBaseline="middle"
                 className="sector-label"
-                style={{ fontSize: galaxy.radius * 0.05 }}
+                style={{ fontSize }}
                 fill="#ffffff"
               >
                 {sector.name}
@@ -103,7 +108,55 @@ export function GalaxyMap({ galaxy, onSelectSector }: Props) {
             </g>
           );
         })}
+        {homeStarId !== undefined && homeStarId !== null
+          ? renderHomeMarker(galaxy, homeStarId, "galaxy")
+          : null}
       </svg>
     </div>
   );
 }
+
+function renderHomeMarker(
+  galaxy: Galaxy,
+  starId: number,
+  level: "galaxy" | "sector" | "cluster",
+) {
+  const star = galaxy.stars[starId];
+  if (!star) return null;
+  const baseR =
+    level === "galaxy"
+      ? galaxy.radius * 0.015
+      : level === "sector"
+      ? galaxy.radius * 0.03
+      : galaxy.radius * 0.06;
+  return (
+    <g className="home-marker" pointerEvents="none">
+      <circle
+        cx={star.x}
+        cy={star.z}
+        r={baseR * 1.4}
+        fill="none"
+        stroke="#ffe26a"
+        strokeOpacity={0.35}
+        strokeWidth={baseR * 0.25}
+      />
+      <circle
+        cx={star.x}
+        cy={star.z}
+        r={baseR}
+        fill="none"
+        stroke="#ffe26a"
+        strokeOpacity={0.95}
+        strokeWidth={baseR * 0.22}
+      />
+      <circle
+        cx={star.x}
+        cy={star.z}
+        r={baseR * 0.28}
+        fill="#ffe26a"
+      />
+    </g>
+  );
+}
+
+export { renderHomeMarker };

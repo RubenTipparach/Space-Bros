@@ -72,6 +72,10 @@ body {
 .map {
   position: absolute;
   inset: 0;
+  /* Force canvas + SVG to render as a single flat 3D plane. Without this,
+   * browsers sometimes lift the SVG overlay slightly above the canvas,
+   * making sector outlines look detached from the star field. */
+  transform-style: flat;
 }
 
 .map-canvas {
@@ -80,6 +84,8 @@ body {
   width: 100%;
   height: 100%;
   display: block;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .map-svg {
@@ -87,6 +93,63 @@ body {
   inset: 0;
   width: 100%;
   height: 100%;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.zoom-controls {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  background: rgba(12, 14, 22, 0.75);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 4px;
+  backdrop-filter: blur(8px);
+}
+
+.zoom-controls button {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  background: rgba(138, 180, 255, 0.08);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.zoom-controls button:hover:not(:disabled) {
+  background: rgba(138, 180, 255, 0.2);
+}
+
+.zoom-controls button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.zoom-controls .zoom-level {
+  text-align: center;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0;
+}
+
+.home-marker {
+  animation: home-pulse 2.4s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes home-pulse {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(255, 226, 106, 0.55)); }
+  50% { filter: drop-shadow(0 0 10px rgba(255, 226, 106, 0.95)); }
 }
 
 .sector-wedge {

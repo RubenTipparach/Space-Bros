@@ -49,7 +49,11 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
 
   return (
     <div className="scene">
-      <MapRoot galaxy={galaxy} onSelectStar={setSelectedStar} />
+      <MapRoot
+        galaxy={galaxy}
+        onSelectStar={setSelectedStar}
+        homeStarId={homeStarId}
+      />
 
       <header className="hud">
         <h1>

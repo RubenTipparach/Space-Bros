@@ -14,18 +14,18 @@ describe("generateClusters", () => {
     );
   });
 
-  it("produces exactly 26 clusters: 2 per core × 4 + 3 per outer × 6", () => {
+  it("produces exactly 52 clusters: 4 per core × 4 + 6 per outer × 6", () => {
     const sectors = generateSectors("size");
     const clusters = generateClusters({ seed: "size", sectors, galaxyRadius: 500 });
-    assert.equal(clusters.length, 2 * 4 + 3 * 6);
+    assert.equal(clusters.length, 4 * 4 + 6 * 6);
     const coreClusters = clusters.filter(
       (c) => sectors.find((s) => s.id === c.sectorId)?.kind === "core",
     );
     const outerClusters = clusters.filter(
       (c) => sectors.find((s) => s.id === c.sectorId)?.kind === "outer",
     );
-    assert.equal(coreClusters.length, 8);
-    assert.equal(outerClusters.length, 18);
+    assert.equal(coreClusters.length, 16);
+    assert.equal(outerClusters.length, 36);
   });
 
   it("every cluster's code matches the sector prefix + grid cell", () => {

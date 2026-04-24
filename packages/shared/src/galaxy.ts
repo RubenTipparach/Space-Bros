@@ -245,6 +245,12 @@ export function generateGalaxy(opts: GenerateGalaxyOptions): Galaxy {
   const coreCount = Math.floor(starCount * 0.18);
   const diskCount = Math.floor(starCount * 0.28);
 
+  // Soft galaxy edge — stars beyond the nominal disc radius fall off
+  // exponentially rather than clamping to a hard boundary. Going out to
+  // 1.18× the nominal radius but most stars stay inside.
+  const SOFT_EDGE_FRACTION = 1.18;
+  const softRadius = radius * SOFT_EDGE_FRACTION;
+
   for (let i = 0; i < starCount; i++) {
     let pos: XYZ;
     if (i < coreCount) {
@@ -255,12 +261,24 @@ export function generateGalaxy(opts: GenerateGalaxyOptions): Galaxy {
       pos = armPosition(rng, { radius, thickness, branches, spin, randomness });
     }
 
-    // Clamp stars to the disk so nothing escapes the visible galaxy.
+    // Soft falloff: stars past `radius` fade exponentially out to
+    // `softRadius`. Beyond that, pull back in.
     const r = Math.hypot(pos.x, pos.z);
     if (r > radius) {
-      const s = radius / r;
-      pos.x *= s;
-      pos.z *= s;
+      const over = (r - radius) / (softRadius - radius);
+      const keep = Math.exp(-over * 3); // how likely it stays at that radius
+      if (rng() > keep) {
+        // Pull back toward the rim with some jitter so we don't form a ring.
+        const target = radius * (0.85 + rng() * 0.12);
+        const s = target / r;
+        pos.x *= s;
+        pos.z *= s;
+      } else if (r > softRadius) {
+        // Hard clamp at softRadius for the very rare stragglers.
+        const s = softRadius / r;
+        pos.x *= s;
+        pos.z *= s;
+      }
     }
 
     const sector = classifyPosition(pos.x, pos.z, radius, sectors);

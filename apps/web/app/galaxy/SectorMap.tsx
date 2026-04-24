@@ -12,16 +12,18 @@ import {
   viewBox,
   wedgePath,
 } from "./map-helpers";
+import { renderHomeMarker } from "./GalaxyMap";
 
 interface Props {
   galaxy: Galaxy;
   sector: Sector;
   onSelectCluster: (cluster: Cluster) => void;
+  homeStarId?: number | null;
 }
 
 const CANVAS_SIZE = 1200;
 
-export function SectorMap({ galaxy, sector, onSelectCluster }: Props) {
+export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bounds = useMemo(() => sectorBounds(sector, galaxy, 1.12), [sector, galaxy]);
   const dust = useMemo(() => generateDust(galaxy, 25_000), [galaxy]);
@@ -121,6 +123,9 @@ export function SectorMap({ galaxy, sector, onSelectCluster }: Props) {
             </g>
           );
         })}
+        {homeStarId !== undefined && homeStarId !== null
+          ? renderHomeMarker(galaxy, homeStarId, "sector")
+          : null}
       </svg>
     </div>
   );

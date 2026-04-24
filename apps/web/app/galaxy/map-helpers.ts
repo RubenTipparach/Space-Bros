@@ -139,70 +139,130 @@ export function project(
 }
 
 // ---- Sector wedge path (organic, noise-perturbed boundary) ---------------
+//
+// Red Blob Games polygonal-maps approach, adapted for our radial layout:
+//   1. Every boundary between two sectors is a shared, noise-subdivided
+//      curve. The noise key is derived from the boundary's identity so
+//      neighbouring sectors compute the IDENTICAL curve and their edges
+//      kiss perfectly — no gaps, no overlaps.
+//   2. Radial boundaries perturb tangentially (perpendicular to the
+//      radial line) so the straight pie-slice edge bends in and out of
+//      the sector.
+//   3. Outer-arc boundaries perturb radially (in/out from center).
+//   4. Per-boundary seed + multi-octave sin harmonics give a smooth,
+//      continuous wobble.
 
-/**
- * Deterministic hash → small integer seed used for sector boundary
- * perturbation. Two sectors with the same name shouldn't exist, but we
- * hash the id just in case.
- */
-function sectorSeed(sector: Sector): number {
+function hashString(s: string): number {
   let h = 2166136261;
-  for (let i = 0; i < sector.id.length; i++) {
-    h ^= sector.id.charCodeAt(i);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return (h >>> 0) % 1_000_000;
+  return h >>> 0;
 }
 
 /**
- * Multi-harmonic noisy radius. 3 sin waves at different frequencies,
- * phased by the sector's seed, modulating the base radius by ±8%.
- * Smooth, continuous, seeded per-sector — same sector always wobbles
- * the same way.
+ * Shared-key noise: a value in roughly [-1, 1] that depends on the key
+ * and a parameter `t`. Four octaves of sin with per-octave phase shifts
+ * derived from the key.
  */
-function noisyRadius(baseR: number, angle: number, seed: number, amplitude: number): number {
-  const s = seed * 0.001;
-  const a1 = Math.sin(angle * 3 + s * 2.3) * amplitude;
-  const a2 = Math.sin(angle * 5 + s * 5.7) * amplitude * 0.55;
-  const a3 = Math.sin(angle * 9 + s * 7.1) * amplitude * 0.25;
-  return baseR * (1 + a1 + a2 + a3);
+function sharedNoise(key: string, t: number): number {
+  let h = hashString(key);
+  let v = 0;
+  let amp = 1;
+  let freq = 2;
+  let total = 0;
+  for (let o = 0; o < 4; o++) {
+    const phase = (h % 10000) / 10000 * Math.PI * 2;
+    v += amp * Math.sin(t * freq + phase);
+    total += amp;
+    h = Math.imul(h, 1103515245) + 12345;
+    amp *= 0.55;
+    freq *= 1.9;
+  }
+  return v / total;
 }
 
+/** Radial-boundary key: same angle from both adjacent sectors → same key. */
+function radialBoundaryKey(angle: number): string {
+  // Round to ~3e-6 radian precision so floating-point wobble doesn't
+  // split the key between neighbours.
+  return `rad:${Math.round(normAngle(angle) * 1_000_000)}`;
+}
+
+/** Outer-arc key: per-sector so adjacent outer wedges don't share arcs. */
+function outerArcKey(sector: Sector): string {
+  return `arc:${sector.id}`;
+}
+
+const RADIAL_AMPLITUDE = 0.12;        // fraction of galaxy radius
+const OUTER_ARC_AMPLITUDE = 0.09;     // outer edge of outer sectors
+const INNER_ARC_AMPLITUDE = 0.04;     // boundary between Core and outer
+
+const RADIAL_SAMPLES = 28;
+const OUTER_ARC_SAMPLES = 48;
+const INNER_ARC_SAMPLES = 32;
+
 /**
- * Build an SVG path for a sector as a perturbed-polygon annular
- * sector. 48 points along the outer arc + 32 along the inner arc (or
- * a single point at center for Core quadrants).
+ * Build an SVG path for a sector as a perturbed-polygon annular sector.
+ * Neighbours share radial-boundary noise keys so their wobbles align.
  */
 export function wedgePath(sector: Sector, galaxy: Galaxy): string {
-  const seed = sectorSeed(sector);
   const innerR = galaxy.radius * sector.innerR;
   const outerR = galaxy.radius * sector.outerR;
   const wedge = sector.wedge;
   const span = wedgeSpan(wedge);
-  const outerSamples = 48;
-  const innerSamples = 24;
-  const outerAmp = sector.kind === "outer" ? 0.06 : 0.08;
-  const innerAmp = sector.kind === "outer" ? 0.05 : 0;
-
   const points: [number, number][] = [];
 
-  // Outer arc — perturbed. Walk start → end.
-  for (let i = 0; i <= outerSamples; i++) {
-    const t = i / outerSamples;
+  // 1) Start radial boundary: walk inner → outer along wedge.start.
+  const startKey = radialBoundaryKey(wedge.start);
+  for (let i = 0; i <= RADIAL_SAMPLES; i++) {
+    const t = i / RADIAL_SAMPLES;
+    const r = innerR + t * (outerR - innerR);
+    // Offset perpendicular to the radial line (tangent to the arc at r).
+    const offset = sharedNoise(startKey, t * 4) * galaxy.radius * RADIAL_AMPLITUDE * 0.5
+                 * easeAtEnds(t); // taper at vertex ends so corners still meet
+    const perpAngle = wedge.start + Math.PI / 2;
+    const x = Math.cos(wedge.start) * r + Math.cos(perpAngle) * offset;
+    const z = Math.sin(wedge.start) * r + Math.sin(perpAngle) * offset;
+    points.push([x, z]);
+  }
+
+  // 2) Outer arc: wedge.start → wedge.end, perturbed radially.
+  const arcKey = outerArcKey(sector);
+  for (let i = 1; i <= OUTER_ARC_SAMPLES; i++) {
+    const t = i / OUTER_ARC_SAMPLES;
     const angle = wedge.start + t * span;
-    const r = noisyRadius(outerR, angle, seed, outerAmp);
+    const n = sharedNoise(arcKey, t * 3);
+    const r = outerR * (1 + n * OUTER_ARC_AMPLITUDE * easeAtEnds(t));
     points.push([Math.cos(angle) * r, Math.sin(angle) * r]);
   }
 
+  // 3) End radial boundary: walk outer → inner along wedge.end.
+  const endKey = radialBoundaryKey(wedge.end);
+  for (let i = 1; i <= RADIAL_SAMPLES; i++) {
+    const t = i / RADIAL_SAMPLES;
+    const r = outerR - t * (outerR - innerR);
+    // Note: walking outer→inner = parameter (1 - t) from the OTHER
+    // sector's perspective. Use (1 - t) so the boundary matches.
+    const offset = sharedNoise(endKey, (1 - t) * 4) * galaxy.radius * RADIAL_AMPLITUDE * 0.5
+                 * easeAtEnds(1 - t);
+    const perpAngle = wedge.end + Math.PI / 2;
+    const x = Math.cos(wedge.end) * r + Math.cos(perpAngle) * offset;
+    const z = Math.sin(wedge.end) * r + Math.sin(perpAngle) * offset;
+    points.push([x, z]);
+  }
+
+  // 4) Inner closure — arc back, or point at origin for Core quadrants.
   if (sector.innerR === 0) {
-    // Core quadrant — close through the origin.
     points.push([0, 0]);
   } else {
-    // Inner arc — perturbed. Walk end → start (reverse direction).
-    for (let i = 0; i <= innerSamples; i++) {
-      const t = i / innerSamples;
+    const innerKey = outerArcKey(sector) + ":inner";
+    for (let i = 1; i <= INNER_ARC_SAMPLES; i++) {
+      const t = i / INNER_ARC_SAMPLES;
       const angle = wedge.end - t * span;
-      const r = noisyRadius(innerR, angle, seed + 17, innerAmp);
+      const n = sharedNoise(innerKey, t * 2);
+      const r = innerR * (1 + n * INNER_ARC_AMPLITUDE * easeAtEnds(t));
       points.push([Math.cos(angle) * r, Math.sin(angle) * r]);
     }
   }
@@ -215,12 +275,30 @@ export function wedgePath(sector: Sector, galaxy: Galaxy): string {
   return d;
 }
 
-/** Geometric center of a sector wedge for label placement. */
+/**
+ * Smooth-step-ish taper that goes to 0 at t=0 and t=1, peak in middle.
+ * Keeps boundary vertices anchored so corners between sectors stay
+ * tight while the middles of the edges wobble.
+ */
+function easeAtEnds(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return 4 * x * (1 - x); // parabola peaking at 1 at t=0.5
+}
+
+/**
+ * Geometric center of a sector wedge for label placement.
+ *
+ * Core quadrants put their label at 75% of the outer rim (not the
+ * midpoint) so four labels at 90° apart don't pile up at the origin.
+ */
 export function sectorCenter(sector: Sector, galaxy: Galaxy): { x: number; z: number } {
   const wedge = sector.wedge;
   const span = wedgeSpan(wedge);
   const mid = normAngle(wedge.start + span / 2);
-  const rCenter = galaxy.radius * (sector.innerR + sector.outerR) / 2;
+  const rCenter =
+    sector.kind === "core"
+      ? galaxy.radius * sector.outerR * 0.75
+      : galaxy.radius * (sector.innerR + sector.outerR) / 2;
   return { x: Math.cos(mid) * rCenter, z: Math.sin(mid) * rCenter };
 }
 
