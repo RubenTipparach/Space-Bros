@@ -251,23 +251,25 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
           <meshBasicMaterial transparent opacity={0} depthWrite={false} />
         </mesh>
 
-        <Sectors3D
-          galaxy={galaxy}
-          hoveredSectorId={hoveredSectorId}
-          selectedSectorId={selectedSector?.id ?? null}
-          onHoverSector={(s) => setHoveredSectorId(s?.id ?? null)}
-          onSelectSector={(s) => {
-            setSelectedSector(s);
-            setSelectedCluster(null);
-            setSelectedGroup(null);
-            setSelectedStarId(null);
-          }}
-          sectorEdges={borders.sectorEdges}
-          rimEdges={borders.rimEdges}
-          active={viewLevel === "galaxy"}
-        />
+        {!inSolarSystem ? (
+          <Sectors3D
+            galaxy={galaxy}
+            hoveredSectorId={hoveredSectorId}
+            selectedSectorId={selectedSector?.id ?? null}
+            onHoverSector={(s) => setHoveredSectorId(s?.id ?? null)}
+            onSelectSector={(s) => {
+              setSelectedSector(s);
+              setSelectedCluster(null);
+              setSelectedGroup(null);
+              setSelectedStarId(null);
+            }}
+            sectorEdges={borders.sectorEdges}
+            rimEdges={borders.rimEdges}
+            active={viewLevel === "galaxy"}
+          />
+        ) : null}
 
-        {selectedSector ? (
+        {selectedSector && !inSolarSystem ? (
           <Clusters3D
             galaxy={galaxy}
             sector={selectedSector}
@@ -284,7 +286,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
           />
         ) : null}
 
-        {selectedCluster ? (
+        {selectedCluster && !inSolarSystem ? (
           <Groups3D
             galaxy={galaxy}
             cluster={selectedCluster}
