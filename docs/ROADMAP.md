@@ -211,23 +211,20 @@ _Size: half a session._
 All five milestones landed. A player can go from zero → 10 colonies →
 entire tech tree over a few sessions of play. Score number goes up.
 
-## Post-MVP (parked until SP-1..5 done)
+## Post-MVP
 
-All deliberately deferred per [`DECISIONS.md ADR-009`](./DECISIONS.md):
+**Multiplayer** (Clerk, SSE, fog of war, combat, fairness, diplomacy,
+trade, anti-cheat, admin) → see [`MULTIPLAYER.md`](./MULTIPLAYER.md).
+All deferred per [ADR-009](./DECISIONS.md).
 
-- **Chunk 4c — real Clerk auth.** Unblocks multiplayer.
-- **Chunk 7 — SSE push.** Requires Redis. Polling stays fine for idle.
-- **Chunk 9 — multiplayer interactions.** Fog of war, outposts on shared
-  planets, cross-player visibility.
-- **Chunk 10 — combat.** Fleet encounters, seeded RNG resolver, fleet-vs-fleet.
-- **Persistent-universe fairness** (ARCHITECTURE §9): catch-up ramps,
-  sanctuary sectors, offline shield, inactivity decay, sliding leaderboards.
-- **Chunk 11 — PWA polish.** Manifest, service worker, web push.
-- **Ops** — rate limiting, admin dashboard, events partitioning, monitoring,
-  tests for DB + route handlers + cross-impl parity.
-- **Ship variety** — scouts, frigates, destroyers (tied to combat).
-- **Diplomacy / chat / alliances.**
-- **Trade between players.**
+**Everything else**, still parked until SP-1..5 ship:
+
+- **Chunk 11 — PWA polish.** Manifest, service worker, web push for
+  completed events. Applies to single-player too.
+- **Tests** below the shared lib — DB queries, route handlers, offline
+  API, cross-impl parity.
+- **Events / orders_log partitioning** (ARCHITECTURE scaling envelope);
+  needed once ~10M rows accumulate.
 
 ## Known tech debt / risks
 

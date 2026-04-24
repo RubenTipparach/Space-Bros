@@ -217,68 +217,20 @@ a re-architecture. We avoid hard vendor coupling: Postgres is Postgres
 - **Time skew / daylight saving / leap seconds.** We only use UTC epoch ms
   server-side. Clients display local time but never submit time.
 
-## 9. Persistent universe and new-player fairness
+## 9. Persistent universe and fairness → MULTIPLAYER.md
 
-We picked a single persistent universe — no seasonal wipes. Civilizations
-live forever; empires grow over years of real time. This is the core
-fantasy of the game and seasons would undercut it.
+One persistent galaxy, no seasonal wipes (ADR-002). Everything
+related to keeping a persistent-universe multiplayer game fair —
+catch-up ramps, offline shield, sanctuary sectors, inactivity decay,
+sliding leaderboards, content expansion, event-payload compatibility —
+is deferred along with the rest of multiplayer and documented in
+[`docs/MULTIPLAYER.md`](./docs/MULTIPLAYER.md).
 
-Persistent MMOs have a well-known failure mode: early arrivals compound
-their lead, new players can't catch up, churn kills the game. We mitigate
-deliberately; none of these are optional, they are load-bearing.
-
-**Catch-up ramps for new players.**
-- First 14 days of play: 3× resource rate, 2× research speed, free starter
-  fleet. Decays linearly to 1× at day 30.
-- "Lost civilization" bonus: on account creation, roll a small random
-  tech-tree head start so two new players on the same day aren't identical
-  and the top of the tree isn't so far away that the early game feels
-  pointless.
-
-**Soft caps and diminishing returns on veteran power.**
-- Research cost scales with the player's total completed research, not
-  just the next tech — long-term players pay a galactic-knowledge tax.
-- Per-colony population cap scales with building level but plateaus
-  quickly; empire scaling comes from _more colonies_ (which takes time
-  and is visible to neighbours) rather than infinite vertical stacking.
-- Fleet upkeep costs scale superlinearly in fleet size — huge stacks are
-  not free to maintain, which penalises parked doomstacks.
-
-**Structural protections.**
-- **Sanctuary sectors** near each player's home: only players within a
-  small power band can attack inside. Leaves the sanctuary when you
-  build outside it.
-- **Offline shield**: see §6. In a persistent world this is critical —
-  without it, vacation = death.
-- **Attacker cooldown**: you can't repeatedly attack the same colony
-  within a short window. Breaks farming patterns.
-- **Inactivity decay**: players inactive for 30 days lose their shield;
-  at 90 days, undefended colonies decay (buildings degrade, population
-  drifts to zero) and eventually revert to neutral planets that anyone
-  can colonise. Player's research and cosmetic progress survive — they
-  can return and rebuild.
-
-**Leaderboards over sliding windows.**
-- Rankings are 30-day and 90-day, not all-time. An all-time board exists
-  for bragging rights but doesn't gate content.
-
-**Content expansion as a substitute for wipes.**
-- When the meta stalls, we add new tech tiers, new ship hulls, new biomes,
-  new mid-late-game goals. Veterans get a new horizon; new players can
-  skip to the latest tier via the catch-up ramp.
-- We explicitly reserve the option of a one-time "great reset" event
-  later in the game's life, but it would be signaled months ahead and
-  cosmetic rewards would preserve veteran identity.
-
-**Schema and event-payload compatibility.**
-Because the world never wipes, every event payload shape we ship must
-remain processable indefinitely. Rules:
-- Every event row carries a `payload_version int`.
-- Reducers switch on `(kind, payload_version)` and only add new
-  handlers — never remove old ones.
-- Breaking a payload is done by adding a new kind, not mutating an old one.
-- Schema migrations are additive; columns get dropped only after a
-  follow-up migration ensures no event references them.
+The only piece that touches the server architecture today is rule **§6.9**
+of that doc: every event row carries a `payload_version int`, and
+reducers switch on `(kind, payload_version)` and only ever _add_
+handlers. This is already reflected in the schema (ADR-012). Migrations
+are additive.
 
 ## 10. Technology decisions (with trade-offs)
 
