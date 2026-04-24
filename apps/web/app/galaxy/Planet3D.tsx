@@ -116,8 +116,11 @@ export function Planet3D({
       </mesh>
 
       {/* Invisible wider hit mesh so grazing clicks still register.
-          Sized generously (1.6×) since planets are small targets when
-          the camera is pulled back far enough to see the whole system. */}
+          Sized very generously (2.5×) since planets sit on a huge
+          background plane — if the click misses the planet it lands
+          on the background and previously popped the solar-system
+          view. Scene3D now ignores background clicks while in solar,
+          but a bigger hit area still makes selection feel responsive. */}
       <mesh
         scale={highlightScale}
         onPointerOver={(e: ThreeEvent<PointerEvent>) => {
@@ -140,7 +143,7 @@ export function Planet3D({
           onClick(planet, worldPos);
         }}
       >
-        <sphereGeometry args={[size * 1.6, 20, 12]} />
+        <sphereGeometry args={[size * 2.5, 20, 12]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
     </group>

@@ -222,6 +222,11 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
 
   const onBackgroundClick = (e: ThreeEvent<MouseEvent>) => {
     if (e.eventObject !== e.intersections[0]?.object) return;
+    // While in solar system view, ignore clicks that land on the empty
+    // background plane — planets are small targets and grazing misses
+    // were popping the user back out to galaxy view. They can still
+    // exit via the level-pill × button or by zooming out.
+    if (inSolarSystem) return;
     popLevel();
   };
 

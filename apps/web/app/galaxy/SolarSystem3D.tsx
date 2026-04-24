@@ -24,13 +24,13 @@ interface Props {
  * the system is readable at a glance.
  */
 
-export const AU_SCALE = 3.2;
-export const STAR_SIZE = 2.2;
-export const MIN_ORBIT = 9;
-const PLANET_SIZE_MIN = 1.7;
-const PLANET_SIZE_BASE = 1.8;
+export const AU_SCALE = 5.0;
+export const STAR_SIZE = 3.5;
+export const MIN_ORBIT = 16;
+const PLANET_SIZE_MIN = 4.0;
+const PLANET_SIZE_BASE = 4.0;
 /** Largest allowed planet radius — keeps even gas giants clear of neighbours. */
-const PLANET_SIZE_MAX = 4.6;
+const PLANET_SIZE_MAX = 9.0;
 
 export function solarSystemMaxOrbit(star: Star): number {
   let max = MIN_ORBIT;
