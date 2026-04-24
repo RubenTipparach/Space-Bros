@@ -4,6 +4,7 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { Galaxy, Star } from "@space-bros/shared";
 import { HomeMarker3D } from "./HomeMarker3D";
+import { Sectors3D } from "./Sectors3D";
 import { Stars3D } from "./Stars3D";
 
 interface Props {
@@ -41,6 +42,7 @@ export function Scene3D({ galaxy, onSelectStar, homeStarId }: Props) {
     >
       <ambientLight intensity={0.4} />
 
+      <Sectors3D galaxy={galaxy} />
       <Stars3D galaxy={galaxy} onSelectStar={onSelectStar} />
 
       {homeStarId != null ? (

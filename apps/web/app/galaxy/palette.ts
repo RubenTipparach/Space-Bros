@@ -42,3 +42,21 @@ export const SPECTRAL_POINT_SIZE: Record<Star["spectralClass"], number> = {
   K: 1.2,
   M: 1.0,
 };
+
+/**
+ * 10 distinct hues for sector territory tint. Assigned by sector index
+ * (cycle if more than 10 sectors). Warm core-ish first, cooler outer
+ * later so the galactic centre reads hot when seen from afar.
+ */
+export const SECTOR_COLORS: readonly string[] = [
+  "#d4a03e", // gold
+  "#c94f5f", // red
+  "#4fb56a", // green
+  "#3a7fd0", // blue
+  "#8b6fd4", // purple
+  "#d48a47", // orange
+  "#4fb8c8", // teal
+  "#b3c24a", // yellow-green
+  "#c8589a", // magenta
+  "#6fa4ff", // sky blue
+];
