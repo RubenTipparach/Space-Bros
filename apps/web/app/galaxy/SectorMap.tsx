@@ -5,9 +5,9 @@ import type { Cluster, Galaxy, Sector } from "@space-bros/shared";
 import {
   SPECTRAL_CANVAS_RADIUS,
   SPECTRAL_RGB,
+  type Bounds,
   generateDust,
   project,
-  sectorBounds,
   sectorColor,
   viewBox,
   wedgePath,
@@ -17,15 +17,23 @@ import { renderHomeMarker } from "./GalaxyMap";
 interface Props {
   galaxy: Galaxy;
   sector: Sector;
+  bounds: Bounds;
   onSelectCluster: (cluster: Cluster) => void;
   homeStarId?: number | null;
 }
 
 const CANVAS_SIZE = 1200;
 
-export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props) {
+/**
+ * Non-sector stars are dimmed + desaturated so the active region
+ * reads as the focus. Per-level tuning in map-helpers VISUALS §7a.
+ */
+const OFF_ALPHA = 0.18;
+const OFF_DESAT_TOWARD = 68; // grey target for the desat lerp (0-255)
+const OFF_DESAT_AMOUNT = 0.6; // 0 = no desat, 1 = fully grey
+
+export function SectorMap({ galaxy, sector, bounds, onSelectCluster, homeStarId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const bounds = useMemo(() => sectorBounds(sector, galaxy, 1.12), [sector, galaxy]);
   const dust = useMemo(() => generateDust(galaxy, 25_000), [galaxy]);
   const color = sectorColor(sector, galaxy.sectors);
   const sectorClusters = galaxy.clusters.filter((c) => c.sectorId === sector.id);
@@ -48,12 +56,16 @@ export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props
     }
 
     for (const star of galaxy.stars) {
-      if (star.sectorId !== sector.id) continue;
       const { px, py } = project(star.x, star.z, bounds, CANVAS_SIZE, CANVAS_SIZE);
       if (px < -6 || py < -6 || px > CANVAS_SIZE + 6 || py > CANVAS_SIZE + 6) continue;
-      const [r, g, b] = SPECTRAL_RGB[star.spectralClass];
-      const rad = Math.max(1.5, SPECTRAL_CANVAS_RADIUS[star.spectralClass] * 1.4);
-      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.95)`;
+      const inSector = star.sectorId === sector.id;
+      const [br, bg, bb] = SPECTRAL_RGB[star.spectralClass];
+      const r = inSector ? br : lerp(br, OFF_DESAT_TOWARD, OFF_DESAT_AMOUNT);
+      const g = inSector ? bg : lerp(bg, OFF_DESAT_TOWARD, OFF_DESAT_AMOUNT);
+      const b = inSector ? bb : lerp(bb, OFF_DESAT_TOWARD, OFF_DESAT_AMOUNT);
+      const alpha = inSector ? 0.95 : 0.95 * OFF_ALPHA;
+      const rad = Math.max(1.5, SPECTRAL_CANVAS_RADIUS[star.spectralClass] * (inSector ? 1.4 : 1.0));
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
       ctx.beginPath();
       ctx.arc(px, py, rad, 0, Math.PI * 2);
       ctx.fill();
@@ -73,7 +85,6 @@ export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props
         viewBox={viewBox(bounds)}
         preserveAspectRatio="xMidYMid meet"
       >
-        {/* Wedge outline faint */}
         <path
           d={wedgePath(sector, galaxy)}
           fill={color}
@@ -81,17 +92,12 @@ export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props
           stroke={color}
           strokeOpacity={0.5}
           strokeWidth={galaxy.radius * 0.003}
+          style={{ pointerEvents: "none" }}
         />
         {sectorClusters.map((cluster) => {
           const labelOffset = cluster.spread * 3.5;
           return (
-            <g
-              key={cluster.id}
-              className="cluster-bubble"
-              onClick={() => onSelectCluster(cluster)}
-              role="button"
-              tabIndex={0}
-            >
+            <g key={cluster.id} className="cluster-bubble">
               <circle
                 cx={cluster.center.x}
                 cy={cluster.center.z}
@@ -101,6 +107,8 @@ export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props
                 stroke={color}
                 strokeOpacity={0.75}
                 strokeWidth={galaxy.radius * 0.003}
+                onClick={() => onSelectCluster(cluster)}
+                style={{ cursor: "pointer", pointerEvents: "visiblePainted" }}
               />
               <circle
                 cx={cluster.center.x}
@@ -108,6 +116,7 @@ export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props
                 r={cluster.spread * 0.6}
                 fill={color}
                 fillOpacity={0.4}
+                style={{ pointerEvents: "none" }}
               />
               <text
                 x={cluster.center.x}
@@ -115,7 +124,7 @@ export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props
                 textAnchor="middle"
                 dominantBaseline="hanging"
                 className="cluster-label"
-                style={{ fontSize: galaxy.radius * 0.022 }}
+                style={{ fontSize: galaxy.radius * 0.022, pointerEvents: "none" }}
                 fill="#ffffff"
               >
                 {cluster.name}
@@ -129,4 +138,8 @@ export function SectorMap({ galaxy, sector, onSelectCluster, homeStarId }: Props
       </svg>
     </div>
   );
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return Math.round(a + (b - a) * t);
 }

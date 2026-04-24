@@ -126,6 +126,42 @@ export function viewBox(b: Bounds): string {
   return `${b.minX} ${b.minZ} ${b.maxX - b.minX} ${b.maxZ - b.minZ}`;
 }
 
+export function lerpBounds(a: Bounds, b: Bounds, t: number): Bounds {
+  return {
+    minX: a.minX + (b.minX - a.minX) * t,
+    minZ: a.minZ + (b.minZ - a.minZ) * t,
+    maxX: a.maxX + (b.maxX - a.maxX) * t,
+    maxZ: a.maxZ + (b.maxZ - a.maxZ) * t,
+  };
+}
+
+/**
+ * Shrink/expand `bounds` around a pivot point. `zoom > 1` zooms in
+ * (narrower bounds); `zoom < 1` expands. The pivot is kept fixed in
+ * the scaled space so zooming around the cursor preserves what's
+ * under the pointer.
+ */
+export function zoomBounds(bounds: Bounds, zoom: number, pivotX: number, pivotZ: number): Bounds {
+  const newHw = (bounds.maxX - bounds.minX) / (2 * zoom);
+  const newHz = (bounds.maxZ - bounds.minZ) / (2 * zoom);
+  // How far from pivot is the current center? Preserve that ratio so the
+  // pivot stays under the same screen pixel.
+  const px = pivotX ?? (bounds.minX + bounds.maxX) / 2;
+  const pz = pivotZ ?? (bounds.minZ + bounds.maxZ) / 2;
+  const cx = px + (((bounds.minX + bounds.maxX) / 2) - px) / zoom;
+  const cz = pz + (((bounds.minZ + bounds.maxZ) / 2) - pz) / zoom;
+  return {
+    minX: cx - newHw,
+    minZ: cz - newHz,
+    maxX: cx + newHw,
+    maxZ: cz + newHz,
+  };
+}
+
+export function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
 export function project(
   x: number,
   z: number,

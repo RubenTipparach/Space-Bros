@@ -5,7 +5,7 @@ import type { Galaxy, Sector } from "@space-bros/shared";
 import {
   SPECTRAL_CANVAS_RADIUS,
   SPECTRAL_RGB,
-  galaxyBounds,
+  type Bounds,
   generateDust,
   project,
   sectorCenter,
@@ -16,15 +16,15 @@ import {
 
 interface Props {
   galaxy: Galaxy;
+  bounds: Bounds;
   onSelectSector: (sector: Sector) => void;
   homeStarId?: number | null;
 }
 
 const CANVAS_SIZE = 1200;
 
-export function GalaxyMap({ galaxy, onSelectSector, homeStarId }: Props) {
+export function GalaxyMap({ galaxy, bounds, onSelectSector, homeStarId }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const bounds = useMemo(() => galaxyBounds(galaxy, 1.02), [galaxy]);
   const dust = useMemo(() => generateDust(galaxy, 30_000), [galaxy]);
 
   useEffect(() => {
@@ -35,7 +35,6 @@ export function GalaxyMap({ galaxy, onSelectSector, homeStarId }: Props) {
 
     ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-    // Dust first (additive-ish via low alpha).
     for (const d of dust) {
       const { px, py } = project(d.x, d.z, bounds, CANVAS_SIZE, CANVAS_SIZE);
       if (px < -4 || py < -4 || px > CANVAS_SIZE + 4 || py > CANVAS_SIZE + 4) continue;
@@ -45,7 +44,6 @@ export function GalaxyMap({ galaxy, onSelectSector, homeStarId }: Props) {
       ctx.fill();
     }
 
-    // Stars.
     for (const star of galaxy.stars) {
       const { px, py } = project(star.x, star.z, bounds, CANVAS_SIZE, CANVAS_SIZE);
       if (px < -4 || py < -4 || px > CANVAS_SIZE + 4 || py > CANVAS_SIZE + 4) continue;
@@ -79,13 +77,7 @@ export function GalaxyMap({ galaxy, onSelectSector, homeStarId }: Props) {
               ? galaxy.radius * 0.026
               : galaxy.radius * 0.045;
           return (
-            <g
-              key={sector.id}
-              className="sector-wedge"
-              onClick={() => onSelectSector(sector)}
-              role="button"
-              tabIndex={0}
-            >
+            <g key={sector.id} className="sector-wedge">
               <path
                 d={wedgePath(sector, galaxy)}
                 fill={color}
@@ -93,6 +85,8 @@ export function GalaxyMap({ galaxy, onSelectSector, homeStarId }: Props) {
                 stroke={color}
                 strokeOpacity={0.55}
                 strokeWidth={galaxy.radius * 0.004}
+                onClick={() => onSelectSector(sector)}
+                style={{ cursor: "pointer", pointerEvents: "visiblePainted" }}
               />
               <text
                 x={center.x}
@@ -100,7 +94,7 @@ export function GalaxyMap({ galaxy, onSelectSector, homeStarId }: Props) {
                 textAnchor="middle"
                 dominantBaseline="middle"
                 className="sector-label"
-                style={{ fontSize }}
+                style={{ fontSize, pointerEvents: "none" }}
                 fill="#ffffff"
               >
                 {sector.name}
