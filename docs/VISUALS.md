@@ -356,6 +356,142 @@ apps/web/app/galaxy/
   the selected cluster's stars are raycast-active. Filter raycast, not
   the draw.
 
+## 7a. Hierarchy rewrite (V-1.8 plan — pending)
+
+Current approach is **top-down**: we decide sector wedges first, then
+place stars, then assign clusters by nearest centroid. Even with
+noise-perturbed edges this reads as pie slices because the underlying
+geometry _is_ pie slices. User feedback after V-1.7: "hardcore still
+a pie."
+
+**Switch to bottom-up** per Red Blob. The algorithm:
+
+1. **Groups** (smallest unit) — place ~1000 group centroids with a
+   spiral-density bias. Poisson-disk or stratified random so centroids
+   don't cluster. Each group holds ~12 stars (assign each star to its
+   nearest centroid → Voronoi cell).
+
+2. **Clusters** — aggregate groups into ~50 clusters via k-means on
+   group centroid positions. Each cluster = union of ~20 Voronoi cells.
+
+3. **Sectors** — aggregate clusters into ~10 sectors via k-means on
+   cluster centroids. Each sector = union of ~5 clusters = ~100
+   Voronoi cells.
+
+Boundaries are **shared polygon edges** — no pie wedges, no perturbed
+arcs. Two neighbouring clusters literally share the same edge because
+it's the same Voronoi edge. No z-fighting, no overlap, no gaps.
+
+Dependencies to add:
+- `d3-delaunay` — Voronoi tessellation
+- `polygon-clipping` — boolean polygon union for cluster/sector shapes
+
+What the current code keeps:
+- Star field rendering (canvas)
+- SVG overlay + zoom/pan + 3D pitch
+- Color palette (10 hues still fine)
+- Galaxy seed + spiral star placement pass
+
+What gets replaced:
+- `wedgePath` in `map-helpers.ts` — replaced by per-cluster and
+  per-sector polygon paths, precomputed at galaxy generation time
+- `classifyPosition` in `sectors.ts` — replaced by nearest-centroid
+- The 4-Core-quadrants + 6-outer-wedge decomposition in `sectors.ts` —
+  replaced by k-means aggregation
+- `generateClusters` in `clusters.ts` — replaced by the bottom-up
+  aggregation pipeline
+
+Cluster / sector naming stays roughly the same — we can still name a
+sector after a proper noun and label clusters `ORN-03` style. The
+grid coordinate scheme disappears because clusters are no longer
+placed on a sector-local grid. We'll attach a running index instead
+(ORN-04, CN-02, etc.).
+
+### Navigation
+
+Five discrete zoom levels instead of three:
+
+- galaxy → sector
+- sector → cluster
+- cluster → group
+- group → star → system
+
+At group level, stars should be fat and sparse — the "dozen stars you
+can easily click" experience.
+
+### Home / controlled markers (part of V-1.8)
+
+- Home star: keep the pulsing ring; show at every level.
+- Controlled stars: smaller coloured ring in the player's sector
+  colour. Visible at cluster + group + system preview levels.
+- When a player controls enough stars to justify it, **draw
+  player-specific borders** as a second polygon layer on top of the
+  base map — a coloured outline around the union of their
+  star-containing groups.
+
+### Zoom must be a real camera, not a CSS scale
+
+Current V-1.7 zoom applies a CSS `scale(zoom)` to the stage.
+That just magnifies pixels — same stars, blurrier. Detail doesn't
+emerge, small stars don't resolve into clusters.
+
+**Correct behaviour**: zoom narrows the SVG `viewBox` (and the
+Canvas projection bounds) around a pivot point. More galaxy-space
+per screen-pixel = more detail. Pan becomes "pivot point moves in
+galaxy-space coords." Zooming in at a point keeps that point fixed
+on screen (standard pivot-zoom).
+
+Impl: replace the stage `transform: scale()` with derived
+`Bounds`-from-`(pivot, zoom, levelBounds)`. Re-render canvas +
+re-emit SVG on zoom change. ViewBox = `levelBounds` inset toward
+pivot by `(1 - 1/zoom)`.
+
+Ship this fix alongside V-1.8 or as a standalone V-1.7.1.
+
+### Complete user-feedback inventory
+
+Everything the user has said about the galaxy map, consolidated:
+
+1. Spiral not actually spiral — **V-1.6 fixed math**
+2. Stars too tiny — **V-1.5 min size fix**
+3. Need dust particles — **V-1.5 added**
+4. Need clickable sectors — **V-1.5 added SVG wedges**
+5. Want 2D drill-down map, not 3D flythrough — **V-1.5 pivoted**
+6. Don't want continuous zoom through levels — **V-1.5 discrete levels**
+7. Dust + nebula not visible — **V-1.5 added CSS nebula wash**
+8. Galaxy should be 3D pitched view with pan — **V-1.6 CSS perspective**
+9. Sectors too uniform — **V-1.6 noise-perturbed edges** (insufficient)
+10. Break Core into 4 quadrants — **V-1.6 did it**
+11. Auto-deploy from any branch — **V-1.5 workflow fixed**
+12. Min zoom per level — **V-1.7 added** (but not real camera zoom)
+13. Sector borders Y-offset in 3D — **V-1.7 transform-style: flat** (still present)
+14. Still pie-shaped — **V-1.7 shared-noise edges** (user says still pie)
+15. Hard galaxy edge — **V-1.7 exponential falloff**
+16. Many clusters, "groups" of ~12 stars each — **pending V-1.8**
+17. Home star marker at all levels — **V-1.7 added pulsing ring**
+18. Controlled-star markers — **pending V-1.8**
+19. Player territories form dynamically — **pending V-1.8**
+20. Bottom-up construction, not pie — **pending V-1.8**
+21. Zoom should move camera, not scale renderer — **pending V-1.7.1**
+
+### Scope
+
+- **V-1.7.1** — real camera zoom (viewBox-based, pivot-preserving).
+  One file change in `MapRoot.tsx` + small helper. Unblocks detail
+  progression.
+- **V-1.8a** — replace galaxy generator with the Voronoi + k-means
+  pipeline. Data only, no rendering changes yet. Tests for
+  determinism + hierarchy integrity (every star → one group → one
+  cluster → one sector).
+- **V-1.8b** — switch map renderers to use polygon paths from the new
+  hierarchy. Zoom levels galaxy/sector/cluster use polygon unions.
+- **V-1.8c** — add Group level (new `GroupMap.tsx`) between cluster
+  and star. Camera snaps discretely.
+- **V-1.8d** — controlled-star markers + dynamic player-territory
+  polygon.
+
+Parked until user says go.
+
 ## 8. Sources
 
 - [bpodgursky — Procedural star rendering with three.js and WebGL shaders](https://bpodgursky.com/2017/02/01/procedural-star-rendering-with-three-js-and-webgl-shaders/)
