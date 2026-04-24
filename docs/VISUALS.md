@@ -474,23 +474,79 @@ Everything the user has said about the galaxy map, consolidated:
 20. Bottom-up construction, not pie — **pending V-1.8**
 21. Zoom should move camera, not scale renderer — **pending V-1.7.1**
 
+### Renderer bugs to fix alongside the camera rewrite
+
+All of the below go into V-1.7.1 (renderer-level, pre-hierarchy) so
+the polygon rewrite in V-1.8 lands on top of a healthy base.
+
+- **Desktop clicks miss sectors/clusters/stars.** Root cause: the
+  click guard in `MapRoot.tsx` reads `gesture.current.kind === "pan"`
+  with `moved` set, but the `pan` gesture is entered on _every_
+  pointerdown, not just when a drag actually starts. Desktop clicks
+  pass `moved=false` but the guard check may still have stale state
+  from a previous drag. Fix: reset `gesture.current = { kind: "none" }`
+  on every pointerup _after_ the click fires; or replace the
+  gesture-state guard with a pure "drag distance exceeded threshold
+  since pointerdown" check scoped to the current pointer event.
+
+- **Hit area is a rectangle, not polygon-exact.** The `<g>` wrapping
+  each sector also contains a `<text>` label whose bounding box is
+  rectangular and catches clicks. Clicking the label anywhere —
+  including the parts of the label that overhang the polygon edge —
+  fires the sector onClick. Fix: `pointer-events="none"` on every
+  SVG `<text>` in the map; `pointer-events="fill"` (or default
+  `visiblePainted`) only on the `<path>`. Do the same pattern for
+  clusters and cluster-stars.
+
+- **Level change teleports instead of zooming.** Clicking a sector
+  instantly re-renders at the sector's viewBox. Should be a brief
+  animated zoom-in from the current view's bounds to the target's
+  bounds. Options: (a) CSS transition on the stage transform (works
+  but fights the upcoming real-camera-zoom implementation), (b)
+  animate the SVG viewBox over ~300ms via requestAnimationFrame,
+  lerping the four numbers. Go with (b) so it composes with the
+  pivot-preserving zoom from V-1.7.1 — both manipulate the same
+  `Bounds` state.
+
+- **Off-zone stars stay bright.** When a sector/cluster is selected,
+  stars outside the active zone are still drawn at full colour. User
+  wants them desaturated/alpha'd so the active region reads as the
+  focus. Fix in the canvas draw loop per level:
+  - Galaxy level: no desaturation (all equal weight)
+  - Sector level: non-sector stars drawn at `alpha *= 0.22` and
+    desaturated toward `#444` by ~60%
+  - Cluster level: non-cluster stars drawn at `alpha *= 0.15`,
+    desaturated toward `#333` by ~75%
+  Do the same for dust particles.
+
 ### Scope
 
-- **V-1.7.1** — real camera zoom (viewBox-based, pivot-preserving).
-  One file change in `MapRoot.tsx` + small helper. Unblocks detail
-  progression.
-- **V-1.8a** — replace galaxy generator with the Voronoi + k-means
-  pipeline. Data only, no rendering changes yet. Tests for
-  determinism + hierarchy integrity (every star → one group → one
-  cluster → one sector).
-- **V-1.8b** — switch map renderers to use polygon paths from the new
-  hierarchy. Zoom levels galaxy/sector/cluster use polygon unions.
-- **V-1.8c** — add Group level (new `GroupMap.tsx`) between cluster
-  and star. Camera snaps discretely.
-- **V-1.8d** — controlled-star markers + dynamic player-territory
-  polygon.
+- **V-1.7.1** — renderer cleanup:
+  1. Real camera zoom (viewBox-based, pivot-preserving) replacing
+     CSS scale.
+  2. Polygon-exact hit areas (`pointer-events` on paths only).
+  3. Animated viewBox transitions on level change (~300ms).
+  4. Off-zone star/dust desaturation per level.
+  5. Click-guard fix so desktop clicks work reliably.
+  Scoped to `MapRoot.tsx`, `GalaxyMap.tsx`, `SectorMap.tsx`,
+  `ClusterMap.tsx`, `globals.css`. No data changes.
 
-Parked until user says go.
+- **V-1.8a** — replace galaxy generator with the Voronoi + k-means
+  pipeline. Data only, no rendering changes. Tests for determinism
+  + hierarchy integrity (every star → one group → one cluster → one
+  sector).
+
+- **V-1.8b** — switch map renderers to use polygon paths from the
+  new hierarchy. Galaxy/sector/cluster levels render polygon unions.
+
+- **V-1.8c** — add Group level between cluster and star. Discrete
+  level, same camera animation as the others.
+
+- **V-1.8d** — controlled-star markers + dynamic player-territory
+  polygon (second polygon layer above the base map).
+
+Parked until user says go. Each V-1.8 step depends on V-1.7.1 landing
+first so the Voronoi rewrite drops into a clean renderer.
 
 ## 8. Sources
 
