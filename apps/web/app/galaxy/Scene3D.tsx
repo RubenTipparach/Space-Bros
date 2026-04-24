@@ -395,6 +395,15 @@ function ZoomOutPopper({ triggerDistance, onPop }: ZoomOutPopperProps) {
     (s) => s.controls as unknown as { target: THREE.Vector3 } | null,
   );
   const frames = useRef(0);
+  const hasReached = useRef(false);
+
+  // Reset "has the camera arrived at this level's frame?" whenever the
+  // trigger changes (i.e. we switched levels). Prevents the popper
+  // from firing during the zoom-IN animation from the parent level.
+  useEffect(() => {
+    hasReached.current = false;
+    frames.current = 0;
+  }, [triggerDistance]);
 
   useFrame(() => {
     if (!controls) {
@@ -406,7 +415,17 @@ function ZoomOutPopper({ triggerDistance, onPop }: ZoomOutPopperProps) {
       return;
     }
     const dist = camera.position.distanceTo(controls.target);
-    if (dist > triggerDistance) {
+
+    // Infer the level's focus distance from the trigger. Mark the
+    // camera as "arrived" once it drops below 1.25 × that, meaning the
+    // zoom-in animation has landed and any further outward motion is
+    // a genuine user zoom-out.
+    const focusDistance = triggerDistance / 1.6;
+    if (!hasReached.current && dist < focusDistance * 1.25) {
+      hasReached.current = true;
+    }
+
+    if (hasReached.current && dist > triggerDistance) {
       frames.current += 1;
       if (frames.current >= 15) {
         frames.current = 0;
