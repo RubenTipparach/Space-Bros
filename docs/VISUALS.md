@@ -545,8 +545,104 @@ the polygon rewrite in V-1.8 lands on top of a healthy base.
 - **V-1.8d** — controlled-star markers + dynamic player-territory
   polygon (second polygon layer above the base map).
 
-Parked until user says go. Each V-1.8 step depends on V-1.7.1 landing
-first so the Voronoi rewrite drops into a clean renderer.
+## 7b. V-2.0 — nuke 2D map, go full 3D Three.js
+
+After V-1.7.1 the 2D SVG+Canvas map with CSS `rotateX` was rejected:
+zoom felt like scaling pixels, not camera movement; sector edges
+z-fought; it reads "rendered to a quad" rather than "in space." User
+directive: go back to Three.js 3D and add the spiral pattern.
+
+### What gets nuked
+
+Delete:
+- `apps/web/app/galaxy/MapRoot.tsx`
+- `apps/web/app/galaxy/GalaxyMap.tsx`
+- `apps/web/app/galaxy/SectorMap.tsx`
+- `apps/web/app/galaxy/ClusterMap.tsx`
+- `apps/web/app/galaxy/Breadcrumb.tsx`
+- `apps/web/app/galaxy/NebulaBackground.tsx` (replaced by 3D skybox
+  or kept as CSS behind the Canvas — TBD)
+- `apps/web/app/galaxy/map-helpers.ts` (most of it; keep colour tables)
+
+### What we keep
+
+- `packages/shared/src/galaxy.ts` — three-pass spiral generator, sectors,
+  clusters, soft edge falloff. That data layer is fine.
+- `apps/web/app/galaxy/SystemView.tsx` — opens when you click a star.
+- `apps/web/app/galaxy/usePlayer.ts` and all adapters — untouched.
+- HUD + Research + Fleets + Resources panels — untouched.
+
+### Border code — also nuked, rewritten bottom-up later
+
+Sector wedges and all wedge-based border rendering are deleted too.
+V-2.0 ships with NO visible sector borders — just the 3D galaxy and
+stars. Borders return in V-2.1 via bottom-up construction:
+
+1. Voronoi tessellation over per-star (or per-group) centroids.
+2. K-means aggregate cells into clusters.
+3. K-means aggregate clusters into sectors.
+4. Render each sector as a 3D mesh whose outline is the union of its
+   member Voronoi cells — actual shared polygon edges, no wedges, no
+   sin-harmonic fake noise.
+
+For V-2.0 the data model (sectors, clusters, star.sectorId) stays so
+nothing else breaks, but none of it renders visually. User can navigate
+with a free orbital camera and click individual stars.
+
+### What replaces it
+
+New `Scene3D.tsx` built around Three.js via `@react-three/fiber`
+(already installed from V-2 era):
+
+- `<Canvas>` filling the viewport, black/navy clear colour with a
+  3D skybox (large inverted sphere with radial-gradient + noise
+  shader for the nebula wash). For V-2.0, CSS nebula stays behind
+  the Canvas as a cheap backdrop; 3D skybox is V-2.2.
+- `<Stars3D>` — instanced `THREE.Points` for all 12k stars.
+  Point-size shader with `sizeAttenuation` so zoom actually makes
+  closer stars bigger. Min size clamped so distant stars still
+  render as at least 2 px. Colour by spectral class. Subtle
+  additive blending.
+- `<HomeMarker3D>` — three concentric tori at the home star, pulsing
+  via `useFrame`. Always legible from the camera angle.
+- `<CameraController>` — wraps `OrbitControls` from drei with:
+  - Constrained pitch (maxPolarAngle ≈ 85°, minPolarAngle ≈ 30°)
+    so you can't flip below or go fully top-down.
+  - Smooth damping (`enableDamping`, `dampingFactor ≈ 0.08`).
+  - Zoom range that actually shows the galaxy (`minDistance`,
+    `maxDistance` tuned to `galaxy.radius`).
+
+### Navigation model
+
+Free orbital camera, **not** discrete zoom levels. Clicking a sector
+focuses the camera on that sector (smooth lerp) but all stars stay
+visible — no hide/fade. Clicking a star opens the existing SystemView
+panel. Breadcrumb gone; replaced by a "Focus reset" button in the HUD
+that returns the camera to galaxy overview.
+
+Per earlier user feedback, no continuous-through-levels zoom UX. But
+_within_ the 3D scene, zoom is continuous — that's what the user means
+by "smooth zoom." Discreteness is for navigation (sector focus), not
+camera movement.
+
+### Visual targets (each a separate V-2.x follow-up if needed)
+
+- V-2.0: scene rebuilt, stars render, camera orbits, sectors visible
+  as flat wedges, click star opens SystemView.
+- V-2.1: upgraded star shader (chromatic aberration, spikes, HDR-ish
+  bloom via `UnrealBloomPass`).
+- V-2.2: 3D nebula backdrop shader (vs current CSS).
+- V-2.3: 3D sector polygon shapes (Voronoi union from V-1.8 moved to
+  3D).
+- V-2.4: per-star 3D sphere swap when camera zooms close to one.
+
+### Dependencies already installed
+
+- `three`
+- `@react-three/fiber`
+- `@react-three/drei`
+
+No new deps needed for V-2.0.
 
 ## 8. Sources
 

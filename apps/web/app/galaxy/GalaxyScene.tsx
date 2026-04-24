@@ -1,14 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { generateGalaxy, type Star } from "@space-bros/shared";
-import { MapRoot } from "./MapRoot";
 import { SystemView } from "./SystemView";
 import { ResearchPanel } from "./ResearchPanel";
 import { ResourcesHud } from "./ResourcesHud";
 import { FleetsHud } from "./FleetsHud";
 import { usePlayer } from "./usePlayer";
 import { IS_OFFLINE, resetOfflineState } from "@/lib/api";
+
+// Three.js needs to run in the browser — lazy import with SSR off.
+const Scene3D = dynamic(() => import("./Scene3D").then((m) => m.Scene3D), {
+  ssr: false,
+  loading: () => <div className="loading">Warming up the galaxy…</div>,
+});
 
 interface GalaxySceneProps {
   seed: string | number;
@@ -49,7 +55,15 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
 
   return (
     <div className="scene">
-      <MapRoot
+      <div className="nebula-bg" aria-hidden>
+        <div className="nebula-layer layer-a" />
+        <div className="nebula-layer layer-b" />
+        <div className="nebula-layer layer-c" />
+        <div className="nebula-layer layer-d" />
+        <div className="nebula-grain" />
+      </div>
+
+      <Scene3D
         galaxy={galaxy}
         onSelectStar={setSelectedStar}
         homeStarId={homeStarId}
@@ -80,7 +94,7 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
         ) : null}
         {me ? <ResourcesHud me={me} /> : null}
         <p className="muted hint">
-          Click a sector to zoom · tap a star at cluster level for details
+          Drag to orbit · scroll / pinch to zoom · right-click to pan · tap a star
         </p>
         {IS_OFFLINE ? (
           <button

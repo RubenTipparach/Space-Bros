@@ -1,34 +1,44 @@
-import type { SpectralClass, Biome } from "@space-bros/shared";
+import type { Biome, Star } from "@space-bros/shared";
 
-export const SPECTRAL_COLORS: Record<SpectralClass, [number, number, number]> = {
-  O: [0.61, 0.69, 1.0],
-  B: [0.67, 0.75, 1.0],
-  A: [0.79, 0.84, 1.0],
-  F: [0.97, 0.97, 1.0],
-  G: [1.0, 0.96, 0.92],
-  K: [1.0, 0.82, 0.63],
-  M: [1.0, 0.68, 0.32],
+/**
+ * Colour tables used across the 3D scene. Normalised 0-1 values for
+ * shader uniforms; CSS-string aliases provided for SVG-era consumers
+ * (SystemView's planet preview still uses them).
+ */
+
+export const SPECTRAL_RGB: Record<Star["spectralClass"], [number, number, number]> = {
+  O: [156 / 255, 176 / 255, 255 / 255],
+  B: [170 / 255, 191 / 255, 255 / 255],
+  A: [201 / 255, 215 / 255, 255 / 255],
+  F: [248 / 255, 247 / 255, 255 / 255],
+  G: [255 / 255, 244 / 255, 234 / 255],
+  K: [255 / 255, 210 / 255, 161 / 255],
+  M: [255 / 255, 173 / 255, 81 / 255],
 };
 
-export const SPECTRAL_SIZES: Record<SpectralClass, number> = {
-  O: 2.2,
-  B: 1.7,
-  A: 1.4,
-  F: 1.15,
-  G: 1.0,
-  K: 0.85,
-  M: 0.65,
-};
+/** 0-1 float triples for SystemView's SVG planet preview. */
+export const SPECTRAL_COLORS = SPECTRAL_RGB;
 
+/** Biome colour table, used by the SystemView SVG mini-orbit diagram. */
 export const BIOME_COLORS: Record<Biome, string> = {
-  molten: "#ff5533",
-  rocky: "#8a7a6a",
-  desert: "#d4a85b",
-  ocean: "#3a7fd0",
+  molten: "#ff5e3a",
+  rocky: "#8b6f50",
+  desert: "#d4a85a",
+  ocean: "#3676c8",
   earthlike: "#4fb56a",
-  jungle: "#2f8a3a",
-  tundra: "#9fb8c4",
-  ice: "#cfe7ff",
-  gas: "#c89a6a",
-  toxic: "#9acc4b",
+  jungle: "#3c8d3c",
+  tundra: "#b7c5d4",
+  ice: "#dde9ff",
+  gas: "#c7a373",
+  toxic: "#a6d84f",
+};
+
+export const SPECTRAL_POINT_SIZE: Record<Star["spectralClass"], number> = {
+  O: 2.6,
+  B: 2.2,
+  A: 1.9,
+  F: 1.6,
+  G: 1.4,
+  K: 1.2,
+  M: 1.0,
 };
