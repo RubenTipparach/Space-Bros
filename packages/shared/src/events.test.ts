@@ -174,7 +174,7 @@ describe("advanceTo", () => {
 });
 
 describe("processEvent: building_complete", () => {
-  it("increments the building level", () => {
+  it("increments the count for that building tier", () => {
     const s0 = createPlayerState("p1", 0);
     const colonyId = "p1:7:0";
     const s = {
@@ -186,7 +186,7 @@ describe("processEvent: building_complete", () => {
           ownerId: "p1",
           foundedAt: 0,
           biome: "rocky" as const,
-          buildings: { mine: 1 },
+          buildings: { mine_1: 1 },
           population: { value: 100, rate: 0, t0: 0 },
         },
       },
@@ -195,10 +195,10 @@ describe("processEvent: building_complete", () => {
       kind: "building_complete",
       ownerId: "p1",
       fireAt: 3_000,
-      payload: { colonyId, buildingId: "mine" },
+      payload: { colonyId, buildingType: "mine", tier: 1 },
     });
     const { state } = processEvent(s, e);
-    assert.equal(state.colonies[colonyId]!.buildings["mine"], 2);
+    assert.equal(state.colonies[colonyId]!.buildings["mine_1"], 2);
   });
 });
 
