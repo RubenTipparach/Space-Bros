@@ -29,8 +29,14 @@ An incremental, persistent, multiplayer galaxy-conquest game. Browser-based
 
 - [`docs/GAMEPLAY.md`](./docs/GAMEPLAY.md) — _what the player experiences._
   Mechanics, buildings, tech tree, ships, balance targets.
+- [`docs/VISUALS.md`](./docs/VISUALS.md) — _how the game looks._ Researched
+  star / planet / nebula / spiral-galaxy techniques, with links and code
+  sketches. The reference doc for the V-track (V-1..5).
 - [`docs/ROADMAP.md`](./docs/ROADMAP.md) — _what we're building next._
-  Shortest path to playable single-player, then post-MVP parking lot.
+  Shortest path to playable single-player and the parallel visual overhaul.
+- [`docs/MULTIPLAYER.md`](./docs/MULTIPLAYER.md) — _deferred multiplayer
+  spec._ Auth, realtime push, fog of war, combat, fairness, diplomacy —
+  designed but not built. Read before turning multiplayer on.
 - [`docs/DECISIONS.md`](./docs/DECISIONS.md) — _ADR log._ Every design call
   with its alternative and "revisit when" trigger.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — _how the server works._ Data

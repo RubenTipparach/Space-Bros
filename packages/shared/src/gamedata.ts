@@ -1,3 +1,4 @@
+import type { Biome } from "./galaxy.ts";
 import type { TechId } from "./state.ts";
 
 /**
@@ -187,4 +188,321 @@ export function populationRateForBiome(habitability: number): number {
   if (habitability < HABITABLE_MIN_HABITABILITY) return 0;
   // Gentle curve: a perfect earthlike grows ~5× an edge-of-hab tundra.
   return 0.05 * Math.max(0, habitability);
+}
+
+// ---- Buildings (SP-1b.1) --------------------------------------------------
+
+export type BuildingType = "mine" | "farm" | "trade_hub" | "lab" | "barracks";
+export const BUILDING_TYPES: readonly BuildingType[] = [
+  "mine",
+  "farm",
+  "trade_hub",
+  "lab",
+  "barracks",
+] as const;
+
+export interface BuildingTierDef {
+  cost: ResourceCost;
+  durationSeconds: number;
+  /** Tech that unlocks this tier (T1 has no unlock requirement). */
+  unlockTech?: TechId;
+  /**
+   * Resource production. For mine/farm/lab/barracks: per-second of the
+   * matching per-colony resource. For trade_hub: credits/s _before_ the
+   * colony's variety multiplier is applied.
+   */
+  perSecond: number;
+}
+
+export interface BuildingDef {
+  type: BuildingType;
+  name: string;
+  description: string;
+  /** Index 0 = Tier 1, etc. */
+  tiers: BuildingTierDef[];
+}
+
+export const BUILDINGS: Record<BuildingType, BuildingDef> = {
+  mine: {
+    type: "mine",
+    name: "Mine",
+    description: "Extracts metal from the local rock.",
+    tiers: [
+      { cost: { metal: 50 }, durationSeconds: 30, perSecond: 0.5 },
+      {
+        cost: { metal: 150, credits: 50 },
+        durationSeconds: 90,
+        perSecond: 1.5,
+        unlockTech: "mining_i",
+      },
+      {
+        cost: { metal: 400, credits: 200, food: 80 },
+        durationSeconds: 300,
+        perSecond: 4,
+        unlockTech: "mining_ii",
+      },
+    ],
+  },
+  farm: {
+    type: "farm",
+    name: "Farm",
+    description: "Feeds the population and lifts the cap.",
+    tiers: [
+      { cost: { metal: 40 }, durationSeconds: 30, perSecond: 0.3 },
+      {
+        cost: { metal: 120, credits: 40 },
+        durationSeconds: 90,
+        perSecond: 1,
+        unlockTech: "agriculture_i",
+      },
+      {
+        cost: { metal: 320, credits: 160 },
+        durationSeconds: 300,
+        perSecond: 3,
+        unlockTech: "agriculture_ii",
+      },
+    ],
+  },
+  trade_hub: {
+    type: "trade_hub",
+    name: "Trade Hub",
+    description: "Sells the colony's surplus into credits. Output × variety.",
+    tiers: [
+      { cost: { metal: 80 }, durationSeconds: 60, perSecond: 0.1 },
+      {
+        cost: { metal: 240, credits: 80 },
+        durationSeconds: 180,
+        perSecond: 0.4,
+        unlockTech: "commerce_i",
+      },
+      {
+        cost: { metal: 640, credits: 320 },
+        durationSeconds: 600,
+        perSecond: 1.5,
+        unlockTech: "commerce_ii",
+      },
+    ],
+  },
+  lab: {
+    type: "lab",
+    name: "Research Lab",
+    description: "Generates science used for research.",
+    tiers: [
+      { cost: { metal: 80, food: 20 }, durationSeconds: 60, perSecond: 0.5 },
+      {
+        cost: { metal: 240, food: 60, credits: 80 },
+        durationSeconds: 180,
+        perSecond: 1.5,
+        unlockTech: "scientific_method",
+      },
+      {
+        cost: { metal: 640, food: 160, credits: 320 },
+        durationSeconds: 600,
+        perSecond: 4,
+        unlockTech: "computing",
+      },
+    ],
+  },
+  barracks: {
+    type: "barracks",
+    name: "Barracks",
+    description: "Trains military strength. Will matter when combat lands.",
+    tiers: [
+      { cost: { metal: 100 }, durationSeconds: 60, perSecond: 0.3 },
+      {
+        cost: { metal: 300, credits: 100 },
+        durationSeconds: 180,
+        perSecond: 1,
+        unlockTech: "drill",
+      },
+      {
+        cost: { metal: 800, credits: 400 },
+        durationSeconds: 600,
+        perSecond: 3,
+        unlockTech: "logistics",
+      },
+    ],
+  },
+};
+
+export function getBuildingDef(type: string): BuildingDef | undefined {
+  return BUILDINGS[type as BuildingType];
+}
+
+export function buildingTierKey(type: BuildingType, tier: number): string {
+  return `${type}_${tier}`;
+}
+
+export function parseBuildingKey(
+  key: string,
+): { type: BuildingType; tier: number } | null {
+  const sep = key.lastIndexOf("_");
+  if (sep < 0) return null;
+  const type = key.slice(0, sep) as BuildingType;
+  const tier = Number.parseInt(key.slice(sep + 1), 10);
+  if (!BUILDING_TYPES.includes(type) || !Number.isFinite(tier) || tier < 1) {
+    return null;
+  }
+  return { type, tier };
+}
+
+// ---- Population mechanics -------------------------------------------------
+
+/**
+ * Per GAMEPLAY §4.1. Raw carrying capacity for each biome, before tech
+ * and variety modifiers.
+ */
+export const BIOME_BASE_POPULATION: Record<Biome, number> = {
+  molten: 500,
+  gas: 0,
+  toxic: 1_000,
+  ice: 2_000,
+  rocky: 3_000,
+  desert: 5_000,
+  tundra: 8_000,
+  jungle: 20_000,
+  earthlike: 25_000,
+  ocean: 15_000,
+};
+
+/**
+ * Stacking habitat techs raise the global cap multiplier. We pick the
+ * **highest** unlocked tier rather than multiplying — Arcology supersedes
+ * Better Habitats, etc.
+ */
+export const HABITAT_TECH_MULTIPLIERS: ReadonlyArray<{ tech: TechId; mult: number }> = [
+  { tech: "better_habitats", mult: 1.5 },
+  { tech: "arcologies", mult: 2.5 },
+  { tech: "megacities", mult: 5.0 },
+];
+
+export function habitatTechMultiplier(techs: ReadonlySet<string>): number {
+  let best = 1;
+  for (const { tech, mult } of HABITAT_TECH_MULTIPLIERS) {
+    if (techs.has(tech)) best = Math.max(best, mult);
+  }
+  return best;
+}
+
+/**
+ * Variety bonus: how many distinct building types this colony has.
+ * "Need a variety to fill jobs" — see GAMEPLAY §4.1.
+ */
+const VARIETY_TABLE = [0.5, 0.5, 1.0, 1.3, 1.6, 2.0] as const;
+
+export function distinctBuildingTypes(buildings: Record<string, number>): number {
+  const types = new Set<string>();
+  for (const [key, count] of Object.entries(buildings)) {
+    if (count <= 0) continue;
+    const parsed = parseBuildingKey(key);
+    if (parsed) types.add(parsed.type);
+  }
+  return types.size;
+}
+
+export function varietyMultiplier(buildings: Record<string, number>): number {
+  const n = distinctBuildingTypes(buildings);
+  return VARIETY_TABLE[Math.min(n, VARIETY_TABLE.length - 1)] ?? 2;
+}
+
+export function populationCap(
+  biome: Biome,
+  buildings: Record<string, number>,
+  techs: ReadonlySet<string>,
+): number {
+  const base = BIOME_BASE_POPULATION[biome] ?? 1_000;
+  return Math.round(base * habitatTechMultiplier(techs) * varietyMultiplier(buildings));
+}
+
+/**
+ * Food-gated growth rate. Per GAMEPLAY §4.2:
+ *   consumption = pop / 10_000 food/s
+ *   effective = baseHab × clamp(produced/consumed, 0, 1.5)
+ */
+export function effectivePopulationRate(args: {
+  population: number;
+  habitability: number;
+  foodProducedPerSec: number;
+}): number {
+  const base = populationRateForBiome(args.habitability);
+  if (base <= 0) return 0;
+  const consumed = Math.max(args.population / 10_000, 0);
+  if (consumed <= 0) return base; // tiny populations are food-free
+  const ratio = Math.max(0, Math.min(1.5, args.foodProducedPerSec / consumed));
+  return base * ratio;
+}
+
+// ---- Per-colony rate aggregation ------------------------------------------
+
+export interface ColonyTargetRates {
+  metal: number;
+  food: number;
+  science: number;
+  military: number;
+  /** This colony's contribution to the global credits rate. */
+  creditsContribution: number;
+}
+
+/**
+ * Sum every building's contribution at the colony, plus the §5.2 home
+ * baseline if `isHome` is true.
+ *
+ * Trade-hub credits output is multiplied by the colony's variety
+ * multiplier — diverse colonies earn way more from the same hub.
+ */
+export function colonyTargetRates(
+  buildings: Record<string, number>,
+  isHome: boolean,
+): ColonyTargetRates {
+  const rates: ColonyTargetRates = {
+    metal: isHome ? HOME_COLONY_RESOURCE_RATES.metalPerSecond : 0,
+    food: isHome ? HOME_COLONY_RESOURCE_RATES.foodPerSecond : 0,
+    science: isHome ? HOME_COLONY_RESOURCE_RATES.sciencePerSecond : 0,
+    military: isHome ? HOME_COLONY_RESOURCE_RATES.militaryPerSecond : 0,
+    creditsContribution: 0,
+  };
+
+  const variety = varietyMultiplier(buildings);
+
+  for (const [key, count] of Object.entries(buildings)) {
+    if (count <= 0) continue;
+    const parsed = parseBuildingKey(key);
+    if (!parsed) continue;
+    const def = BUILDINGS[parsed.type];
+    const tier = def.tiers[parsed.tier - 1];
+    if (!tier) continue;
+    const total = tier.perSecond * count;
+    switch (parsed.type) {
+      case "mine":
+        rates.metal += total;
+        break;
+      case "farm":
+        rates.food += total;
+        break;
+      case "lab":
+        rates.science += total;
+        break;
+      case "barracks":
+        rates.military += total;
+        break;
+      case "trade_hub":
+        rates.creditsContribution += total * variety;
+        break;
+    }
+  }
+
+  return rates;
+}
+
+/**
+ * Global credits rate = sum across all colonies + the home baseline trickle.
+ * The "homeColonyId" is passed only to know whether to add the §5.2
+ * baseline 0.1 credits/s.
+ */
+export function globalCreditsRate(
+  perColonyContributions: number[],
+  hasHome: boolean,
+): number {
+  const baseline = hasHome ? HOME_COLONY_RESOURCE_RATES.creditsPerSecond : 0;
+  return baseline + perColonyContributions.reduce((s, x) => s + x, 0);
 }

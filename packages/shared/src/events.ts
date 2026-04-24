@@ -36,7 +36,10 @@ export interface ResearchCompletePayload {
 
 export interface BuildingCompletePayload {
   colonyId: ColonyId;
-  buildingId: BuildingId;
+  /** Type from BUILDING_TYPES (mine/farm/trade_hub/lab/barracks). */
+  buildingType: string;
+  /** 1-indexed tier (1, 2, or 3). */
+  tier: number;
 }
 
 export interface TerraformCompletePayload {
@@ -112,13 +115,14 @@ function applyBuildingComplete(
   state: PlayerState,
   event: SimEvent<BuildingCompletePayload>,
 ): ProcessResult {
-  const { colonyId, buildingId } = event.payload;
+  const { colonyId, buildingType, tier } = event.payload;
   const colony = state.colonies[colonyId];
   if (!colony) return { state, emitted: [] };
-  const level = (colony.buildings[buildingId] ?? 0) + 1;
+  const key = `${buildingType}_${tier}`;
+  const count = (colony.buildings[key] ?? 0) + 1;
   const updated: Colony = {
     ...colony,
-    buildings: { ...colony.buildings, [buildingId]: level },
+    buildings: { ...colony.buildings, [key]: count },
   };
   return {
     state: { ...state, colonies: { ...state.colonies, [colonyId]: updated } },

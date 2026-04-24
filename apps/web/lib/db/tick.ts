@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { Biome } from "@space-bros/shared";
+import { buildingTierKey, type Biome, type BuildingType } from "@space-bros/shared";
 import { schema, type Db } from "./client";
+import { recomputePlayerEconomy } from "./economy";
 
 const { events, research, colonies, fleets, players, planetOverlays } = schema;
 
@@ -44,7 +45,8 @@ interface ResearchCompletePayload {
 }
 interface BuildingCompletePayload {
   colonyId: string;
-  buildingId: string;
+  buildingType: string;
+  tier: number;
 }
 interface TerraformCompletePayload {
   colonyId: string;
@@ -101,16 +103,22 @@ async function applyResearchComplete(tx: TickTx, event: EventRow) {
 
 async function applyBuildingComplete(tx: TickTx, event: EventRow) {
   const p = event.payload as BuildingCompletePayload;
+  const key = buildingTierKey(p.buildingType as BuildingType, p.tier);
   await tx
     .update(colonies)
     .set({
       buildings: sql`jsonb_set(
         coalesce(${colonies.buildings}, '{}'::jsonb),
-        ${`{${p.buildingId}}`}::text[],
-        to_jsonb(coalesce((${colonies.buildings}->>${p.buildingId})::int, 0) + 1)
+        ${`{${key}}`}::text[],
+        to_jsonb(coalesce((${colonies.buildings}->>${key})::int, 0) + 1)
       )`,
     })
     .where(and(eq(colonies.id, p.colonyId), eq(colonies.ownerId, event.ownerId)));
+
+  // The building changed the colony's variety + per-resource rates and
+  // possibly the global credits rate (trade hubs). Rebase everything so
+  // accumulators step forward cleanly with the new rates.
+  await recomputePlayerEconomy(tx, event.ownerId, event.fireAt);
 }
 
 async function applyTerraformComplete(tx: TickTx, event: EventRow) {

@@ -1,4 +1,15 @@
 import { rngFromSeed, weightedPick, rangeFloat, rangeInt, type Rng } from "./rng.ts";
+import {
+  CORE_INNER_RADIUS_FRACTION,
+  classifyPosition,
+  generateSectors,
+  type Sector,
+} from "./sectors.ts";
+import {
+  classifyClusterForStar,
+  generateClusters,
+  type Cluster,
+} from "./clusters.ts";
 
 export type SpectralClass = "O" | "B" | "A" | "F" | "G" | "K" | "M";
 
@@ -30,12 +41,20 @@ export interface Star {
   z: number;
   spectralClass: SpectralClass;
   planets: Planet[];
+  /** Sector id from the seeded sector dictionary. */
+  sectorId: string;
+  /** Cluster id this star belongs to. Every star has one. */
+  clusterId: string;
 }
 
 export interface Galaxy {
   seed: number | string;
   generatorVersion: number;
+  /** Radius of the galaxy disk in light-years. */
+  radius: number;
   stars: Star[];
+  sectors: Sector[];
+  clusters: Cluster[];
 }
 
 export interface GenerateGalaxyOptions {
@@ -43,9 +62,22 @@ export interface GenerateGalaxyOptions {
   starCount: number;
   radius?: number;
   thickness?: number;
+  /** Spiral branches — 2 major arms + 2 minor arms = 4 by default. */
+  branches?: number;
+  /** Spiral tightness. radius × spin = spinAngle. */
+  spin?: number;
+  /** 0..1 tangential jitter relative to radius. */
+  randomness?: number;
+  /** Higher = stars hug the arm spine more tightly. */
+  randomnessPower?: number;
 }
 
-export const GENERATOR_VERSION = 1;
+/**
+ * Bumped to 2 for V-1 — we now emit sectors + clusters + tagged stars,
+ * so stored data keyed by the old galaxy (e.g. `planet_overlays`) may
+ * need backfill. No prod data exists yet so this is free today.
+ */
+export const GENERATOR_VERSION = 2;
 
 const SPECTRAL_WEIGHTS: readonly (readonly [SpectralClass, number])[] = [
   ["O", 0.0001],
@@ -83,12 +115,41 @@ const BIOME_HABITABILITY: Record<Biome, number> = {
   toxic: 0.05,
 };
 
-function randomStarPosition(rng: Rng, radius: number, thickness: number): { x: number; y: number; z: number } {
-  // Disk distribution with mild spiral-ish bias: sample r with sqrt for area, y thin.
-  const r = Math.sqrt(rng()) * radius;
-  const theta = rng() * Math.PI * 2;
-  const y = (rng() - 0.5) * thickness * (1 - r / radius);
-  return { x: Math.cos(theta) * r, y, z: Math.sin(theta) * r };
+/**
+ * Three.js-Journey-style spiral galaxy position. Stars cluster into
+ * `branches` arms with tangential randomness that falls off sharply
+ * toward the arm spine.
+ */
+function spiralStarPosition(
+  rng: Rng,
+  starIndex: number,
+  opts: {
+    radius: number;
+    thickness: number;
+    branches: number;
+    spin: number;
+    randomness: number;
+    randomnessPower: number;
+  },
+): { x: number; y: number; z: number; radius: number } {
+  const r = Math.pow(rng(), opts.randomnessPower) * opts.radius;
+  const branchAngle = ((starIndex % opts.branches) / opts.branches) * Math.PI * 2;
+  const spinAngle = r * opts.spin;
+
+  const sign = () => (rng() < 0.5 ? 1 : -1);
+  const jitter = (scale: number) =>
+    Math.pow(rng(), opts.randomnessPower) * opts.randomness * r * scale * sign();
+
+  const rx = jitter(1);
+  const ry = jitter(0.35); // flatter vertically than horizontally
+  const rz = jitter(1);
+
+  return {
+    x: Math.cos(branchAngle + spinAngle) * r + rx,
+    y: ry + (rng() - 0.5) * opts.thickness * (1 - r / opts.radius) * 0.3,
+    z: Math.sin(branchAngle + spinAngle) * r + rz,
+    radius: r,
+  };
 }
 
 function generatePlanets(rng: Rng, starId: number): Planet[] {
@@ -113,19 +174,73 @@ export function generateGalaxy(opts: GenerateGalaxyOptions): Galaxy {
   const { seed, starCount } = opts;
   const radius = opts.radius ?? 500;
   const thickness = opts.thickness ?? 40;
+  const branches = opts.branches ?? 4;
+  const spin = opts.spin ?? 1.2;
+  const randomness = opts.randomness ?? 0.35;
+  const randomnessPower = opts.randomnessPower ?? 3;
+
+  const sectors = generateSectors(seed);
+  const clusters = generateClusters({ seed, sectors, galaxyRadius: radius });
+
   const rng = rngFromSeed(seed);
-  const stars: Star[] = [];
+  const stars: Star[] = new Array(starCount);
+
+  // First pass: place stars, assign sector + cluster. We pull stars
+  // toward the nearest cluster center so the hierarchy feels real.
   for (let i = 0; i < starCount; i++) {
-    const pos = randomStarPosition(rng, radius, thickness);
+    const pos = spiralStarPosition(rng, i, {
+      radius,
+      thickness,
+      branches,
+      spin,
+      randomness,
+      randomnessPower,
+    });
+
+    const sector = classifyPosition(pos.x, pos.z, radius, sectors);
+
+    // Find the closest cluster in this sector; if one exists, bias the
+    // star's position slightly toward the cluster center (keeps clumps
+    // visible while preserving arm structure).
+    let cluster = classifyClusterForStar(pos.x, pos.z, sector.id, clusters);
+    if (!cluster && sector.id !== "core") {
+      // Fallback: closest cluster anywhere (edge cases at wedge boundaries).
+      cluster = classifyClusterForStar(pos.x, pos.z, "core", clusters);
+    }
+    if (!cluster) {
+      // Shouldn't happen with non-zero clusters, but stay resilient.
+      cluster = clusters[0]!;
+    }
+
+    // Pull 20% toward cluster center for visible clumping.
+    const pullX = cluster.center.x - pos.x;
+    const pullZ = cluster.center.z - pos.z;
+    const dist = Math.hypot(pullX, pullZ);
+    const pullFactor = 0.2 * Math.min(1, dist / Math.max(1, cluster.spread * 3));
+    const x = pos.x + pullX * pullFactor;
+    const z = pos.z + pullZ * pullFactor;
+
     const spectralClass = weightedPick(rng, SPECTRAL_WEIGHTS);
-    stars.push({
+    stars[i] = {
       id: i,
-      x: pos.x,
+      x,
       y: pos.y,
-      z: pos.z,
+      z,
       spectralClass,
       planets: generatePlanets(rng, i),
-    });
+      sectorId: sector.id,
+      clusterId: cluster.id,
+    };
   }
-  return { seed, generatorVersion: GENERATOR_VERSION, stars };
+
+  return {
+    seed,
+    generatorVersion: GENERATOR_VERSION,
+    radius,
+    stars,
+    sectors,
+    clusters,
+  };
 }
+
+export { CORE_INNER_RADIUS_FRACTION };

@@ -23,6 +23,68 @@ it to land, and see a second colony appear. **No buildings with real
 effects, no tech effects beyond travel + colonists, no score, no UI
 feedback for progression.** That's what's next.
 
+## Visual overhaul (V-track, interleaved)
+
+Parallel thread to the gameplay milestones below. The game "looks
+terrible" per user feedback — V-1..5 fix that. Research locked in via
+ADR-016..019 and documented in [`VISUALS.md`](./VISUALS.md). Order is
+dependency-driven: V-1 replaces the galaxy generator and everything else
+builds on it.
+
+### V-1 · Spiral galaxy + sectors + clusters
+
+- [ ] `packages/shared/src/galaxy.ts` — replace disk distribution with
+      the Three.js-Journey-style spiral (radius, branches, spin,
+      randomness, randomnessPower, insideColor/outsideColor). 2 major +
+      2 minor arms.
+- [ ] `packages/shared/src/sectors.ts` (new) — seeded dictionary picker
+      producing 1 Core + 6 outer sectors with `{ name, prefix, wedge }`.
+- [ ] `packages/shared/src/clusters.ts` (new) — ~20 clusters placed by
+      (sectorId, gridCell) with fancy names and short codes
+      (`ORN-B3-Kestrel`).
+- [ ] Per-star assignment: each star carries its owning sectorId +
+      clusterId in the generator output.
+- [ ] HUD breadcrumb stub ("Galaxy"); no camera zoom yet.
+
+### V-2 · 5-level zoom + selection
+
+- [ ] `CameraRig.tsx` that lerps between zoom-level targets (galaxy →
+      sector → cluster → system preview → system 3D).
+- [ ] Sector overlay in galaxy view with clickable labels.
+- [ ] Cluster bubbles in sector view.
+- [ ] Raycast gating: only the active cluster's stars hit-test.
+- [ ] Breadcrumb HUD: `Galaxy › Orion Reach › ORN-B3 Kestrel › #8214`
+      with back-navigation.
+
+### V-3 · Upgraded star shader (LOD)
+
+- [ ] Billboard upgrade: chromatic aberration, star spikes, HDR bloom
+      via `UnrealBloomPass`.
+- [ ] `StarSphere.tsx` — procedural shader-sphere with granulation,
+      sunspots, flares. Temperature → RGB (piecewise black-body).
+- [ ] LOD switch: within the active cluster, stars near the camera
+      render as spheres; others stay billboards.
+
+### V-4 · System 3D view + procedural planet shader
+
+- [ ] Clicking a star in cluster view moves the camera to system preview
+      (sidebar info on the right, 2D orbit map there).
+- [ ] "View in 3D" button zooms further and switches to a 3D scene:
+      star at origin, planets on orbital circles, camera orbits the
+      system.
+- [ ] `Planet3D.tsx` — procedural surface shader (biome palette from
+      §2.2 of VISUALS), atmosphere shell (additive-rim), cloud layer
+      for earthlike/jungle/ocean, emissive night-side lights.
+
+### V-5 · Polish pass
+
+- [ ] Lens flares on hot stars (O/B/A class).
+- [ ] Sector-tinted nebula foreground billboards.
+- [ ] Device tier detection (fbm octaves, star sphere limit, bloom on/off).
+- [ ] Saveable camera bookmarks ("jump to home colony").
+
+---
+
 ## Shortest path to playable single-player
 
 The MVP goal: a player sits down for a few hours and has something that
@@ -149,23 +211,20 @@ _Size: half a session._
 All five milestones landed. A player can go from zero → 10 colonies →
 entire tech tree over a few sessions of play. Score number goes up.
 
-## Post-MVP (parked until SP-1..5 done)
+## Post-MVP
 
-All deliberately deferred per [`DECISIONS.md ADR-009`](./DECISIONS.md):
+**Multiplayer** (Clerk, SSE, fog of war, combat, fairness, diplomacy,
+trade, anti-cheat, admin) → see [`MULTIPLAYER.md`](./MULTIPLAYER.md).
+All deferred per [ADR-009](./DECISIONS.md).
 
-- **Chunk 4c — real Clerk auth.** Unblocks multiplayer.
-- **Chunk 7 — SSE push.** Requires Redis. Polling stays fine for idle.
-- **Chunk 9 — multiplayer interactions.** Fog of war, outposts on shared
-  planets, cross-player visibility.
-- **Chunk 10 — combat.** Fleet encounters, seeded RNG resolver, fleet-vs-fleet.
-- **Persistent-universe fairness** (ARCHITECTURE §9): catch-up ramps,
-  sanctuary sectors, offline shield, inactivity decay, sliding leaderboards.
-- **Chunk 11 — PWA polish.** Manifest, service worker, web push.
-- **Ops** — rate limiting, admin dashboard, events partitioning, monitoring,
-  tests for DB + route handlers + cross-impl parity.
-- **Ship variety** — scouts, frigates, destroyers (tied to combat).
-- **Diplomacy / chat / alliances.**
-- **Trade between players.**
+**Everything else**, still parked until SP-1..5 ship:
+
+- **Chunk 11 — PWA polish.** Manifest, service worker, web push for
+  completed events. Applies to single-player too.
+- **Tests** below the shared lib — DB queries, route handlers, offline
+  API, cross-impl parity.
+- **Events / orders_log partitioning** (ARCHITECTURE scaling envelope);
+  needed once ~10M rows accumulate.
 
 ## Known tech debt / risks
 

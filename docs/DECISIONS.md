@@ -288,6 +288,97 @@ See [`GAMEPLAY.md §6`](./GAMEPLAY.md).
 
 ---
 
+---
+
+## ADR-016 · Star rendering is LOD: billboard far, procedural sphere near
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+Galaxy / sector / cluster views render stars as upgraded instanced
+billboards (chromatic aberration, star spikes, HDR bloom post). When the
+camera is zoomed to a single system, stars switch to a procedural shader
+sphere (multi-octave simplex granulation, sunspots, corona billboard)
+per [bpodgursky](https://bpodgursky.com/2017/02/01/procedural-star-rendering-with-three-js-and-webgl-shaders/).
+
+**Alternative considered:** always-billboards (cheap, but looks flat up
+close) and always-spheres (unusable perf at 15k stars). LOD threads the
+needle.
+
+**Revisit when:** cluster-level zoom shows too many spheres at once and
+frame rate cratersm, or when we decide to support "dog-fight" scenes
+that require sphere shading at medium distances.
+
+See [`VISUALS.md §1`](./VISUALS.md).
+
+---
+
+## ADR-017 · Planets render full procedural (surface + atmosphere + clouds + lights)
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+Every planet: a procedural surface sphere (biome-tinted noise) + an
+additive-rim atmosphere shell ([Stemkoski pattern](https://stemkoski.github.io/Three.js/Atmosphere.html))
++ a cloud layer on habitable biomes + emissive night-side city lights
+on earthlike / jungle / ocean biomes. Night-side light masking via the
+[Franky "Make your own Earth" pattern](https://franky-arkon-digital.medium.com/make-your-own-earth-in-three-js-8b875e281b1e).
+
+**Alternative considered:** physically-accurate Rayleigh/Mie scattering
+via `@takram/three-atmosphere`. Too heavy for "every planet in every
+solar system" — keep in reserve for a hero-planet reveal later.
+
+**Revisit when:** users spend meaningful time staring at one planet and
+the fake atmosphere breaks the illusion — swap to `@takram/three-atmosphere`
+for just that planet.
+
+See [`VISUALS.md §2`](./VISUALS.md).
+
+---
+
+## ADR-018 · Nebula background is fbm-of-fbm skybox + cluster nebula billboards
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+Full-screen fragment-shader skybox using Inigo Quilez's domain-warped
+fbm technique, seeded by galaxy seed so the background is stable per
+universe. Foreground: per-cluster translucent billboards for parallax.
+See [Book of Shaders §13](https://thebookofshaders.com/13/).
+
+**Alternative considered:** volumetric raymarch (too expensive on
+mobile GPUs), pre-baked cubemap (no per-seed variety),
+`three-nebula` particle lib (great for FX, wrong metaphor for a
+"background").
+
+**Revisit when:** mobile devices can't afford 6-octave fbm — drop to 4
+via a uniform that the device-tier helper sets.
+
+See [`VISUALS.md §3`](./VISUALS.md).
+
+---
+
+## ADR-019 · Galaxy is a spiral; 7 sectors with dictionary names; ~20 named clusters with sector-grid codes
+**Date:** 2026-04-24 · **Status:** Accepted (user call)
+
+- Spiral star distribution (per the Three.js Journey galaxy generator +
+  open-source clones), 2 major + 2 minor arms.
+- **7 selectable regions**: 1 Core sector (inner radius) + 6 outer
+  sectors. Outer sector names picked per galaxy seed by combining a
+  proper-noun dictionary (Orion, Perseus, Cygnus…) with a descriptor
+  dictionary (Reach, Belt, Shard…).
+- **~20 clusters** distributed ~3–4 per sector. Cluster code =
+  `${sectorPrefix}-${gridCell}-${fancyName}` — sector prefix, 5×5 grid
+  cell (A1..E5), and a seeded fancy name (Kestrel, Orpheus…). Display
+  as "Kestrel Cluster (ORN-B3)".
+- Camera zooms through **5 levels**: Galaxy → Sector → Cluster →
+  System preview → System 3D.
+
+**Alternative considered:** random galaxy-wide naming. Rejected — grid
+codes let players describe locations to each other ("meet me in ORN-C2")
+and anchor memory of where things are.
+
+**Revisit when:** playtest shows 7 sectors / 20 clusters is the wrong
+scale for the star count; tune counts (not structure) in the generator.
+
+See [`VISUALS.md §4-5`](./VISUALS.md).
+
+---
+
 ## Template for new ADRs
 
 ```markdown
