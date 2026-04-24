@@ -98,6 +98,25 @@ body {
   background: rgba(138, 180, 255, 0.12);
 }
 
+.sector-pill .pill-action {
+  width: auto;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: rgba(138, 180, 255, 0.15);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sector-pill .pill-action:hover {
+  background: rgba(138, 180, 255, 0.3);
+}
+
 /* ---- Nebula background (CSS, sits behind the Three.js Canvas) ---- */
 
 .nebula-bg {

@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { Canvas, type ThreeEvent } from "@react-three/fiber";
+import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import type { Cluster, Galaxy, Group, Sector, Star } from "@space-bros/shared";
+import type { Cluster, Galaxy, Group, Planet, Sector, Star } from "@space-bros/shared";
 import { CameraFocus } from "./CameraFocus";
 import { Clusters3D } from "./Clusters3D";
 import { Groups3D } from "./Groups3D";
 import { HomeMarker3D } from "./HomeMarker3D";
 import { Sectors3D, computeSectorBounds } from "./Sectors3D";
 import { SelectedStarMarker3D } from "./SelectedStarMarker3D";
+import { SolarSystem3D, solarSystemMaxOrbit } from "./SolarSystem3D";
+import { StarAltitudeLines3D } from "./StarAltitudeLines3D";
 import { Stars3D } from "./Stars3D";
 import { extractBorders } from "./borders";
 
@@ -19,7 +21,7 @@ interface Props {
   homeStarId?: number | null;
 }
 
-type ViewLevel = "galaxy" | "sector" | "cluster" | "group";
+type ViewLevel = "galaxy" | "sector" | "cluster" | "group" | "star" | "solar";
 
 export function Scene3D({ galaxy, homeStarId }: Props) {
   const r = galaxy.radius;
@@ -33,8 +35,15 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
   const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
   const [selectedStarId, setSelectedStarId] = useState<number | null>(null);
+  const [inSolarSystem, setInSolarSystem] = useState(false);
+  const [hoveredPlanetId, setHoveredPlanetId] = useState<string | null>(null);
+  const [selectedPlanet, setSelectedPlanet] = useState<Planet | null>(null);
 
-  const viewLevel: ViewLevel = selectedGroup
+  const viewLevel: ViewLevel = inSolarSystem
+    ? "solar"
+    : selectedStarId != null
+    ? "star"
+    : selectedGroup
     ? "group"
     : selectedCluster
     ? "cluster"
@@ -45,10 +54,28 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
   const sectorBounds = useMemo(() => computeSectorBounds(galaxy), [galaxy]);
   const borders = useMemo(() => extractBorders(galaxy), [galaxy]);
 
-  // Selectable stars at group level: only those belonging to the
-  // selected group. Everywhere else Stars3D ignores clicks.
-  const selectableStarIds = useMemo(() => {
-    if (!selectedGroup) return null;
+  // Star-id sets per active parent so altitude lines can render
+  // only the stars at the current zoom level.
+  const sectorStarIds = useMemo(() => {
+    if (!selectedSector) return new Set<number>();
+    const set = new Set<number>();
+    for (const s of galaxy.stars) {
+      if (s.sectorId === selectedSector.id) set.add(s.id);
+    }
+    return set;
+  }, [galaxy, selectedSector]);
+
+  const clusterStarIds = useMemo(() => {
+    if (!selectedCluster) return new Set<number>();
+    const set = new Set<number>();
+    for (const s of galaxy.stars) {
+      if (s.clusterId === selectedCluster.id) set.add(s.id);
+    }
+    return set;
+  }, [galaxy, selectedCluster]);
+
+  const groupStarIds = useMemo(() => {
+    if (!selectedGroup) return new Set<number>();
     const set = new Set<number>();
     for (const s of galaxy.stars) {
       if (s.groupId === selectedGroup.id) set.add(s.id);
@@ -56,7 +83,20 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     return set;
   }, [galaxy, selectedGroup]);
 
+  const altitudeStarIds: ReadonlySet<number> = selectedGroup
+    ? groupStarIds
+    : selectedCluster
+    ? clusterStarIds
+    : selectedSector
+    ? sectorStarIds
+    : new Set();
+
+  // Target + distance per viewLevel.
   const focusTarget = useMemo(() => {
+    if (inSolarSystem && selectedStarId != null) {
+      const s = galaxy.stars[selectedStarId];
+      if (s) return new THREE.Vector3(s.x, s.y, s.z);
+    }
     if (selectedStarId != null) {
       const s = galaxy.stars[selectedStarId];
       if (s) return new THREE.Vector3(s.x, 0, s.z);
@@ -72,6 +112,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     }
     return defaultTarget;
   }, [
+    inSolarSystem,
     selectedStarId,
     selectedGroup,
     selectedCluster,
@@ -81,6 +122,10 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
   ]);
 
   const focusDistance = useMemo(() => {
+    if (inSolarSystem && selectedStarId != null) {
+      const s = galaxy.stars[selectedStarId];
+      if (s) return Math.max(8, solarSystemMaxOrbit(s) * 2.4);
+    }
     if (selectedStarId != null) return Math.max(r * 0.02, 6);
     if (selectedGroup) return Math.max(r * 0.035, 12);
     if (selectedCluster) {
@@ -95,6 +140,34 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     }
     return defaultDistance;
   }, [
+    inSolarSystem,
+    selectedStarId,
+    selectedGroup,
+    selectedCluster,
+    selectedSector,
+    sectorBounds,
+    galaxy,
+    r,
+    defaultDistance,
+  ]);
+
+  // Parent focus distance used by the zoom-out-pop detector.
+  const parentFocusDistance = useMemo(() => {
+    if (inSolarSystem) return Math.max(r * 0.02, 6);                    // → star
+    if (selectedStarId != null) return Math.max(r * 0.035, 12);         // → group
+    if (selectedGroup) {
+      const count = selectedCluster?.groupIds.length ?? 1;
+      return Math.max(r * 0.08, Math.sqrt(count) * r * 0.03);           // → cluster
+    }
+    if (selectedCluster && selectedSector) {
+      const b = sectorBounds.get(selectedSector.id);
+      const span = b ? Math.max(b.maxX - b.minX, b.maxZ - b.minZ) : r;
+      return Math.max(r * 0.18, span * 1.3);                            // → sector
+    }
+    if (selectedSector) return defaultDistance;                         // → galaxy
+    return Infinity; // already at galaxy
+  }, [
+    inSolarSystem,
     selectedStarId,
     selectedGroup,
     selectedCluster,
@@ -104,8 +177,13 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     defaultDistance,
   ]);
 
-  // Pop one level at a time on the × button or empty-space click.
   const popLevel = () => {
+    if (inSolarSystem) {
+      setInSolarSystem(false);
+      setSelectedPlanet(null);
+      setHoveredPlanetId(null);
+      return;
+    }
     if (selectedStarId != null) {
       setSelectedStarId(null);
       return;
@@ -131,8 +209,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     popLevel();
   };
 
-  // Cursor feedback: differentiate rotate (left) vs pan (right) while
-  // dragging. Default is grab.
+  // Cursor feedback: left = grabbing (rotate), right = move (pan).
   useEffect(() => {
     const canvas = document.querySelector(".scene-canvas") as HTMLElement | null;
     if (!canvas) return;
@@ -161,6 +238,9 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     ? borders.groupEdgesByCluster.get(selectedCluster.id)
     : undefined;
 
+  const selectedStar =
+    selectedStarId != null ? galaxy.stars[selectedStarId] ?? null : null;
+
   return (
     <>
       <Canvas
@@ -168,7 +248,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
         camera={{
           position: [0, r * 0.9, r * 1.35],
           fov: 55,
-          near: r * 0.005,
+          near: r * 0.003,
           far: r * 12,
         }}
         dpr={[1, 2]}
@@ -179,7 +259,6 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
       >
         <ambientLight intensity={0.4} />
 
-        {/* Invisible backdrop for empty-space click to pop a level. */}
         <mesh
           rotation={[-Math.PI / 2, 0, 0]}
           position={[0, -2, 0]}
@@ -238,22 +317,49 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
           />
         ) : null}
 
-        <Stars3D
-          galaxy={galaxy}
-          onSelectStar={(s: Star) => setSelectedStarId(s.id)}
-          active={viewLevel === "group"}
-          selectableStarIds={selectableStarIds}
-        />
+        {altitudeStarIds.size > 0 && !inSolarSystem ? (
+          <StarAltitudeLines3D
+            galaxy={galaxy}
+            starIds={altitudeStarIds}
+            opacity={selectedGroup ? 0.55 : selectedCluster ? 0.4 : 0.22}
+          />
+        ) : null}
 
-        {homeStarId != null ? (
+        {!inSolarSystem ? (
+          <Stars3D
+            galaxy={galaxy}
+            onSelectStar={(s: Star) => setSelectedStarId(s.id)}
+            active={viewLevel === "group"}
+            selectableStarIds={
+              viewLevel === "group" ? groupStarIds : null
+            }
+          />
+        ) : null}
+
+        {homeStarId != null && !inSolarSystem ? (
           <HomeMarker3D galaxy={galaxy} starId={homeStarId} />
         ) : null}
 
-        {selectedStarId != null ? (
+        {selectedStarId != null && !inSolarSystem ? (
           <SelectedStarMarker3D galaxy={galaxy} starId={selectedStarId} />
         ) : null}
 
+        {inSolarSystem && selectedStar ? (
+          <SolarSystem3D
+            star={selectedStar}
+            hoveredPlanetId={hoveredPlanetId}
+            selectedPlanetId={selectedPlanet?.id ?? null}
+            onHoverPlanet={(p) => setHoveredPlanetId(p?.id ?? null)}
+            onSelectPlanet={setSelectedPlanet}
+          />
+        ) : null}
+
         <CameraFocus target={focusTarget} distance={focusDistance} pitch={0.55} />
+        <ZoomOutPopper
+          threshold={parentFocusDistance}
+          target={focusTarget}
+          onPop={popLevel}
+        />
 
         <OrbitControls
           makeDefault
@@ -263,7 +369,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
           panSpeed={0.7}
           rotateSpeed={0.5}
           zoomSpeed={1.0}
-          minDistance={r * 0.015}
+          minDistance={r * 0.008}
           maxDistance={r * 3.2}
           maxPolarAngle={Math.PI * 0.49}
           minPolarAngle={Math.PI * 0.12}
@@ -275,12 +381,61 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
         sector={selectedSector}
         cluster={selectedCluster}
         group={selectedGroup}
-        starId={selectedStarId}
+        star={selectedStar}
+        planet={selectedPlanet}
         galaxy={galaxy}
         onPop={popLevel}
+        onEnterSolar={() => {
+          if (selectedStarId != null) setInSolarSystem(true);
+        }}
       />
     </>
   );
+}
+
+interface ZoomOutPopperProps {
+  threshold: number;
+  target: THREE.Vector3;
+  onPop: () => void;
+}
+
+/**
+ * Monitors camera distance to the current focus target. Once the
+ * distance passes 1.35 × parent's focus distance for ~20 consecutive
+ * frames (~0.3 s), pops up one level. Hysteresis + frame count prevent
+ * the camera-animation undershoot from firing spurious pops.
+ */
+function ZoomOutPopper({ threshold, target, onPop }: ZoomOutPopperProps) {
+  const camera = useThree((s) => s.camera);
+  const controls = useThree(
+    (s) => s.controls as unknown as { target: THREE.Vector3 } | null,
+  );
+  const frames = useRef(0);
+  const trigger = threshold * 1.35;
+
+  useFrame(() => {
+    if (!Number.isFinite(threshold) || trigger <= 0) {
+      frames.current = 0;
+      return;
+    }
+    if (!controls) return;
+    const dist = camera.position.distanceTo(controls.target);
+    // Only start counting once we're past the trigger distance AND
+    // the controls target has already settled on the intended focus
+    // target (otherwise mid-animation readings would mislead us).
+    const settled = controls.target.distanceToSquared(target) < 1;
+    if (settled && dist > trigger) {
+      frames.current += 1;
+      if (frames.current >= 20) {
+        frames.current = 0;
+        onPop();
+      }
+    } else {
+      frames.current = 0;
+    }
+  });
+
+  return null;
 }
 
 interface LevelPillProps {
@@ -288,9 +443,11 @@ interface LevelPillProps {
   sector: Sector | null;
   cluster: Cluster | null;
   group: Group | null;
-  starId: number | null;
+  star: Star | null;
+  planet: Planet | null;
   galaxy: Galaxy;
   onPop: () => void;
+  onEnterSolar: () => void;
 }
 
 function LevelPill({
@@ -298,27 +455,43 @@ function LevelPill({
   sector,
   cluster,
   group,
-  starId,
+  star,
+  planet,
   galaxy,
   onPop,
+  onEnterSolar,
 }: LevelPillProps) {
-  if (viewLevel === "galaxy" && starId == null) return null;
-
-  // Composing the label hierarchically: Star → Group → Cluster → Sector.
-  const star = starId != null ? galaxy.stars[starId] : null;
+  if (viewLevel === "galaxy") return null;
 
   let title = "";
   let meta = "";
+  let action: React.ReactNode = null;
 
-  if (star) {
-    const sectorName =
-      galaxy.sectors.find((s) => s.id === star.sectorId)?.name ?? "—";
+  if (planet && viewLevel === "solar" && star) {
+    const habPct = Math.round(planet.habitability * 100);
+    title = `Planet ${planet.index + 1}`;
+    meta = `${planet.biome} · ${planet.orbitAu.toFixed(1)} AU · hab ${habPct}%`;
+  } else if (viewLevel === "solar" && star) {
+    const designation = starDesignation(star, galaxy);
+    title = designation;
+    meta = `${star.spectralClass}-class · ${star.planets.length} planet${
+      star.planets.length === 1 ? "" : "s"
+    } · solar system view`;
+  } else if (star) {
+    const designation = starDesignation(star, galaxy);
     const clusterName =
       galaxy.clusters.find((c) => c.id === star.clusterId)?.name ?? "—";
-    title = `Star #${star.id}`;
+    const sectorName =
+      galaxy.sectors.find((s) => s.id === star.sectorId)?.name ?? "—";
+    title = designation;
     meta = `${star.spectralClass}-class · ${star.planets.length} planet${
       star.planets.length === 1 ? "" : "s"
     } · ${clusterName} / ${sectorName}`;
+    action = (
+      <button className="pill-action" onClick={onEnterSolar}>
+        View Solar System →
+      </button>
+    );
   } else if (group) {
     const starCount = galaxy.stars.reduce(
       (n, s) => (s.groupId === group.id ? n + 1 : n),
@@ -352,7 +525,14 @@ function LevelPill({
         <div className="sector-pill-title">{title}</div>
         <div className="sector-pill-meta">{meta}</div>
       </div>
+      {action}
       <button onClick={onPop} aria-label="Back">×</button>
     </div>
   );
+}
+
+function starDesignation(star: Star, galaxy: Galaxy): string {
+  const cluster = galaxy.clusters.find((c) => c.id === star.clusterId);
+  const code = cluster?.code ?? "—";
+  return `${code}-${String(star.id).padStart(4, "0")}`;
 }
