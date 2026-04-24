@@ -31,13 +31,265 @@ body {
 .scene {
   position: fixed;
   inset: 0;
-  touch-action: none;
+  overflow: hidden;
+  touch-action: manipulation;
+  background: #02030a;
 }
 
-.scene canvas {
+/* ---- Map system (2D top-down Stellaris-style) ---- */
+
+.map-root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.map-viewport {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  perspective: 1800px;
+  perspective-origin: 50% 55%;
+  touch-action: none;
+  cursor: grab;
+}
+
+.map-viewport:active {
+  cursor: grabbing;
+}
+
+.map-stage {
+  position: relative;
+  width: min(100vmin, 100%);
+  height: min(100vmin, 100%);
+  aspect-ratio: 1 / 1;
+  transform-origin: center center;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+}
+
+.map-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   display: block;
-  width: 100% !important;
-  height: 100% !important;
+}
+
+.map-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.sector-wedge {
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+
+.sector-wedge:hover path {
+  fill-opacity: 0.22;
+  stroke-opacity: 1;
+}
+
+.sector-wedge:hover {
+  filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.35));
+}
+
+.sector-label {
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.7);
+  stroke-width: 0.6;
+  pointer-events: none;
+  user-select: none;
+}
+
+.cluster-bubble {
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+
+.cluster-bubble:hover circle:first-of-type {
+  fill-opacity: 0.25;
+}
+
+.cluster-bubble:hover {
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.45));
+}
+
+.cluster-label {
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-weight: 500;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.75);
+  stroke-width: 0.4;
+  pointer-events: none;
+  user-select: none;
+}
+
+.cluster-star {
+  cursor: pointer;
+}
+
+.cluster-star:hover {
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));
+}
+
+.star-label {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-weight: 500;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.85);
+  stroke-width: 0.3;
+  pointer-events: none;
+  user-select: none;
+}
+
+.empty-cluster {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+/* ---- Breadcrumb ---- */
+
+.breadcrumb {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(12, 14, 22, 0.75);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+  z-index: 5;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.breadcrumb button {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  padding: 2px 6px;
+  border-radius: 6px;
+  height: auto;
+  width: auto;
+}
+
+.breadcrumb button:hover:not(:disabled) {
+  background: rgba(138, 180, 255, 0.12);
+}
+
+.breadcrumb .bc-current {
+  color: var(--text);
+  font-weight: 600;
+  cursor: default;
+  pointer-events: none;
+}
+
+.breadcrumb .bc-sep {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---- Nebula background ---- */
+
+.nebula-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    #0e1130 0%,
+    #05070f 55%,
+    #010207 100%
+  );
+}
+
+.nebula-layer {
+  position: absolute;
+  inset: -10%;
+  filter: blur(80px);
+  opacity: 0.55;
+  mix-blend-mode: screen;
+}
+
+.nebula-layer.layer-a {
+  background: radial-gradient(
+    circle at 28% 34%,
+    rgba(140, 72, 210, 0.65) 0%,
+    rgba(60, 28, 120, 0.15) 25%,
+    transparent 55%
+  );
+}
+
+.nebula-layer.layer-b {
+  background: radial-gradient(
+    circle at 72% 64%,
+    rgba(64, 180, 220, 0.55) 0%,
+    rgba(22, 80, 120, 0.12) 30%,
+    transparent 60%
+  );
+}
+
+.nebula-layer.layer-c {
+  background: radial-gradient(
+    circle at 60% 20%,
+    rgba(220, 140, 60, 0.42) 0%,
+    rgba(120, 60, 20, 0.08) 30%,
+    transparent 55%
+  );
+}
+
+.nebula-layer.layer-d {
+  background:
+    radial-gradient(
+      circle at 20% 80%,
+      rgba(200, 60, 110, 0.3) 0%,
+      transparent 45%
+    ),
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(255, 220, 150, 0.18) 0%,
+      transparent 22%
+    );
+}
+
+.nebula-grain {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(
+    rgba(255, 255, 255, 0.04) 1px,
+    transparent 1px
+  );
+  background-size: 3px 3px;
+  opacity: 0.25;
+  mix-blend-mode: overlay;
 }
 
 .loading {

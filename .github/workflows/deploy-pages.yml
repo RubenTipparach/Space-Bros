@@ -8,9 +8,10 @@ on:
         description: "Galaxy seed (optional override)"
         required: false
         default: ""
-  # Auto-deploy whenever main moves.
+  # Auto-deploy on push to any branch. Whichever branch last pushed
+  # becomes what's live at the Pages URL.
   push:
-    branches: [main]
+    branches: ['**']
 
 permissions:
   contents: read

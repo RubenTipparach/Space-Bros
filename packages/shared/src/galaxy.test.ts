@@ -28,11 +28,10 @@ describe("generateGalaxy", () => {
     }
   });
 
-  it("stars are distributed across all sectors (Core + outer)", () => {
-    const g = generateGalaxy({ seed: "distribution", starCount: 5_000 });
+  it("stars are distributed across all sectors (4 Core quadrants + 6 outer)", () => {
+    const g = generateGalaxy({ seed: "distribution", starCount: 8_000 });
     const sectorIds = new Set(g.stars.map((s) => s.sectorId));
-    // Expect all 7 sectors to see at least a few stars.
-    assert.equal(sectorIds.size, 7);
+    assert.equal(sectorIds.size, 10);
   });
 
   it("cluster ids on stars match clusters in the galaxy", () => {
