@@ -48,6 +48,56 @@ body {
   touch-action: none;
 }
 
+/* ---- Sector info pill ---- */
+
+.sector-pill {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 14px;
+  background: rgba(12, 14, 22, 0.82);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  max-width: calc(100vw - 32px);
+  white-space: nowrap;
+  overflow: hidden;
+  z-index: 6;
+  font-size: 13px;
+}
+
+.sector-pill-title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sector-pill-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sector-pill button {
+  background: transparent;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sector-pill button:hover {
+  background: rgba(138, 180, 255, 0.12);
+}
+
 /* ---- Nebula background (CSS, sits behind the Three.js Canvas) ---- */
 
 .nebula-bg {

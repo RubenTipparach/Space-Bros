@@ -1,6 +1,62 @@
 import { Delaunay } from "d3-delaunay";
 import { pick, rangeInt, rngFromSeed, type Rng } from "./rng.ts";
 
+// ---- Polygon clipping (Sutherland-Hodgman against a convex clip) ---------
+
+/**
+ * Clip a polygon `subject` against a convex `clip` polygon (CCW
+ * vertex order). Returns the intersection polygon. Both inputs are
+ * lists of [x, y] pairs. Empty-array result means the subject was
+ * entirely outside the clip.
+ */
+function clipPolygonConvex(subject: number[][], clip: number[][]): number[][] {
+  let output: number[][] = subject.slice();
+  const n = clip.length;
+  for (let i = 0; i < n; i++) {
+    if (output.length === 0) break;
+    const input = output;
+    output = [];
+    const a = clip[i]!;
+    const b = clip[(i + 1) % n]!;
+    for (let j = 0; j < input.length; j++) {
+      const p = input[j]!;
+      const q = input[(j + 1) % input.length]!;
+      const pIn = insideEdge(a, b, p);
+      const qIn = insideEdge(a, b, q);
+      if (pIn) {
+        output.push(p);
+        if (!qIn) output.push(lineIntersect(a, b, p, q));
+      } else if (qIn) {
+        output.push(lineIntersect(a, b, p, q));
+      }
+    }
+  }
+  return output;
+}
+
+function insideEdge(a: number[], b: number[], p: number[]): boolean {
+  return (b[0]! - a[0]!) * (p[1]! - a[1]!) - (b[1]! - a[1]!) * (p[0]! - a[0]!) >= 0;
+}
+
+function lineIntersect(a: number[], b: number[], p: number[], q: number[]): number[] {
+  const x1 = a[0]!, y1 = a[1]!, x2 = b[0]!, y2 = b[1]!;
+  const x3 = p[0]!, y3 = p[1]!, x4 = q[0]!, y4 = q[1]!;
+  const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (Math.abs(denom) < 1e-9) return [p[0]!, p[1]!];
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+  return [x1 + t * (x2 - x1), y1 + t * (y2 - y1)];
+}
+
+function generateCirclePolygon(radius: number, segments: number): number[][] {
+  // CCW polygon approximating a circle.
+  const pts: number[][] = [];
+  for (let i = 0; i < segments; i++) {
+    const theta = (i / segments) * Math.PI * 2;
+    pts.push([Math.cos(theta) * radius, Math.sin(theta) * radius]);
+  }
+  return pts;
+}
+
 /**
  * Bottom-up hierarchy per ADR-019-revised: stars → groups → clusters →
  * sectors. Borders are real shared polygon edges because groups are
@@ -228,6 +284,11 @@ export function buildHierarchy(opts: BuildHierarchyOptions): Hierarchy {
   const bbox: [number, number, number, number] = [-R * 1.25, -R * 1.25, R * 1.25, R * 1.25];
   const voronoi = delaunay.voronoi(bbox);
 
+  // Clip every Voronoi cell against a 128-vertex circle at 1.08 × R so
+  // sector territories can never flare past the galactic disc. Cells
+  // whose entire extent was outside the disc collapse to null; cells
+  // that straddle the rim get trimmed to just the inside portion.
+  const clipCircle = generateCirclePolygon(R * 1.08, 128);
   const groupPolys: (number[][] | null)[] = [];
   for (let i = 0; i < groupCentroids.length; i++) {
     const cell = voronoi.cellPolygon(i);
@@ -235,7 +296,9 @@ export function buildHierarchy(opts: BuildHierarchyOptions): Hierarchy {
       groupPolys.push(null);
       continue;
     }
-    groupPolys.push(cell.map((p) => [p[0], p[1]]));
+    const raw = cell.map((p) => [p[0], p[1]]);
+    const clipped = clipPolygonConvex(raw, clipCircle);
+    groupPolys.push(clipped.length >= 3 ? clipped : null);
   }
 
   // --- Step 3: each star → nearest group centroid.

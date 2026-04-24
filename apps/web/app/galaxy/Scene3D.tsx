@@ -1,10 +1,13 @@
 "use client";
 
-import { Canvas } from "@react-three/fiber";
+import { useMemo, useState } from "react";
+import * as THREE from "three";
+import { Canvas, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import type { Galaxy, Star } from "@space-bros/shared";
+import type { Galaxy, Sector, Star } from "@space-bros/shared";
+import { CameraFocus } from "./CameraFocus";
 import { HomeMarker3D } from "./HomeMarker3D";
-import { Sectors3D } from "./Sectors3D";
+import { Sectors3D, computeSectorBounds } from "./Sectors3D";
 import { Stars3D } from "./Stars3D";
 
 interface Props {
@@ -13,55 +16,129 @@ interface Props {
   homeStarId?: number | null;
 }
 
-/**
- * Top-level 3D scene. Camera starts looking down at the galaxy from a
- * ~55° pitch, orbits with damping for smooth rotation + zoom. Zoom is a
- * real camera move — no CSS scale in sight.
- *
- * Sector / cluster borders are deliberately absent in V-2.0 — per user
- * direction they're being rewritten bottom-up (Voronoi + k-means) in
- * V-2.1. The data model in `galaxy.sectors` / `galaxy.clusters` still
- * tags stars but nothing draws the territory shapes yet.
- */
 export function Scene3D({ galaxy, onSelectStar, homeStarId }: Props) {
   const r = galaxy.radius;
+  const defaultTarget = useMemo(() => new THREE.Vector3(0, 0, 0), []);
+  const defaultDistance = r * 1.6;
+
+  const [hoveredSectorId, setHoveredSectorId] = useState<string | null>(null);
+  const [selectedSector, setSelectedSector] = useState<Sector | null>(null);
+
+  const sectorBounds = useMemo(() => computeSectorBounds(galaxy), [galaxy]);
+
+  const focusTarget = useMemo(() => {
+    if (!selectedSector) return defaultTarget;
+    const c = selectedSector.centroid;
+    return new THREE.Vector3(c[0], 0, c[1]);
+  }, [selectedSector, defaultTarget]);
+
+  const focusDistance = useMemo(() => {
+    if (!selectedSector) return defaultDistance;
+    const b = sectorBounds.get(selectedSector.id);
+    if (!b) return defaultDistance;
+    const span = Math.max(b.maxX - b.minX, b.maxZ - b.minZ);
+    // Fit the sector comfortably in view; 1.6× span gives margin.
+    return Math.max(r * 0.18, span * 1.6);
+  }, [selectedSector, sectorBounds, r, defaultDistance]);
+
+  const onBackgroundClick = (e: ThreeEvent<MouseEvent>) => {
+    // Only deselect on clicks that actually hit the background mesh,
+    // not propagated ones from sectors/stars (those stopPropagation).
+    if (e.eventObject === e.intersections[0]?.object) {
+      setSelectedSector(null);
+    }
+  };
+
   return (
-    <Canvas
-      className="scene-canvas"
-      camera={{
-        position: [0, r * 0.9, r * 1.35],
-        fov: 55,
-        near: r * 0.01,
-        far: r * 12,
-      }}
-      dpr={[1, 2]}
-      gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
-      onCreated={({ gl }) => {
-        gl.setClearColor(0x000000, 0);
-      }}
-    >
-      <ambientLight intensity={0.4} />
+    <>
+      <Canvas
+        className="scene-canvas"
+        camera={{
+          position: [0, r * 0.9, r * 1.35],
+          fov: 55,
+          near: r * 0.01,
+          far: r * 12,
+        }}
+        dpr={[1, 2]}
+        gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
+        onCreated={({ gl }) => {
+          gl.setClearColor(0x000000, 0);
+        }}
+      >
+        <ambientLight intensity={0.4} />
 
-      <Sectors3D galaxy={galaxy} />
-      <Stars3D galaxy={galaxy} onSelectStar={onSelectStar} />
+        {/* Invisible backdrop so clicks on empty space can deselect. */}
+        <mesh
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[0, -2, 0]}
+          onClick={onBackgroundClick}
+        >
+          <planeGeometry args={[r * 6, r * 6]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
 
-      {homeStarId != null ? (
-        <HomeMarker3D galaxy={galaxy} starId={homeStarId} />
+        <Sectors3D
+          galaxy={galaxy}
+          hoveredSectorId={hoveredSectorId}
+          selectedSectorId={selectedSector?.id ?? null}
+          onHoverSector={(s) => setHoveredSectorId(s?.id ?? null)}
+          onSelectSector={(s) => setSelectedSector(s)}
+        />
+        <Stars3D galaxy={galaxy} onSelectStar={onSelectStar} />
+
+        {homeStarId != null ? (
+          <HomeMarker3D galaxy={galaxy} starId={homeStarId} />
+        ) : null}
+
+        <CameraFocus target={focusTarget} distance={focusDistance} pitch={0.55} />
+
+        <OrbitControls
+          makeDefault
+          enableDamping
+          dampingFactor={0.08}
+          enablePan
+          panSpeed={0.6}
+          rotateSpeed={0.5}
+          zoomSpeed={0.9}
+          minDistance={r * 0.08}
+          maxDistance={r * 3.2}
+          maxPolarAngle={Math.PI * 0.49}
+          minPolarAngle={Math.PI * 0.12}
+        />
+      </Canvas>
+
+      {selectedSector ? (
+        <SectorInfoPill
+          sector={selectedSector}
+          galaxy={galaxy}
+          onClose={() => setSelectedSector(null)}
+        />
       ) : null}
+    </>
+  );
+}
 
-      <OrbitControls
-        makeDefault
-        enableDamping
-        dampingFactor={0.08}
-        enablePan
-        panSpeed={0.6}
-        rotateSpeed={0.5}
-        zoomSpeed={0.9}
-        minDistance={r * 0.12}
-        maxDistance={r * 3.2}
-        maxPolarAngle={Math.PI * 0.49}
-        minPolarAngle={Math.PI * 0.12}
-      />
-    </Canvas>
+interface PillProps {
+  sector: Sector;
+  galaxy: Galaxy;
+  onClose: () => void;
+}
+
+function SectorInfoPill({ sector, galaxy, onClose }: PillProps) {
+  const clusterCount = sector.clusterIds.length;
+  const starCount = galaxy.stars.reduce(
+    (n, s) => (s.sectorId === sector.id ? n + 1 : n),
+    0,
+  );
+  return (
+    <div className="sector-pill">
+      <div className="sector-pill-title">{sector.name}</div>
+      <div className="sector-pill-meta">
+        {clusterCount} cluster{clusterCount === 1 ? "" : "s"} ·{" "}
+        {starCount.toLocaleString()} star{starCount === 1 ? "" : "s"} ·{" "}
+        <code>{sector.prefix}</code>
+      </div>
+      <button onClick={onClose} aria-label="Close">×</button>
+    </div>
   );
 }
