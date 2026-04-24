@@ -12,32 +12,25 @@ interface Props {
   selectedSectorId: string | null;
   onHoverSector: (sector: Sector | null) => void;
   onSelectSector: (sector: Sector) => void;
+  sectorEdges: Float32Array;
+  rimEdges: Float32Array;
 }
 
 interface SectorMeshData {
   sector: Sector;
   color: string;
   geometry: THREE.BufferGeometry;
-  /** axis-aligned planar bounds used to size the camera focus */
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
 }
 
-/**
- * Flat territory meshes on y = -0.4 (below stars). Each sector is one
- * merged mesh built from its member groups' Voronoi polygons. Now
- * interactive:
- *
- *   - Hover bumps the material opacity; parent tracks `hoveredSectorId`
- *     so we can render the hovered sector a little brighter than the
- *     rest without every mesh having its own state.
- *   - Click calls `onSelectSector`; parent animates the camera to focus.
- */
 export function Sectors3D({
   galaxy,
   hoveredSectorId,
   selectedSectorId,
   onHoverSector,
   onSelectSector,
+  sectorEdges,
+  rimEdges,
 }: Props) {
   const sectorMeshes = useMemo<SectorMeshData[]>(() => {
     const clusterById = new Map(galaxy.clusters.map((c) => [c.id, c]));
@@ -112,12 +105,26 @@ export function Sectors3D({
     });
   }, [galaxy]);
 
+  const sectorEdgeGeometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(sectorEdges, 3));
+    return g;
+  }, [sectorEdges]);
+
+  const rimEdgeGeometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(rimEdges, 3));
+    return g;
+  }, [rimEdges]);
+
   return (
     <group position={[0, -0.4, 0]}>
       {sectorMeshes.map(({ sector, color, geometry }) => {
         const isHover = hoveredSectorId === sector.id;
         const isSelected = selectedSectorId === sector.id;
-        const opacity = isSelected ? 0.38 : isHover ? 0.26 : 0.14;
+        // Dim the selected sector's fill so Clusters3D's sub-territory
+        // tints read through. Unselected-and-hovered get a boost.
+        const opacity = isSelected ? 0.06 : isHover ? 0.26 : 0.16;
         return (
           <mesh
             key={sector.id}
@@ -150,13 +157,34 @@ export function Sectors3D({
           </mesh>
         );
       })}
+
+      {/* Sector borders: bright white lines between different-sector cells. */}
+      <lineSegments geometry={sectorEdgeGeometry} position={[0, 0.05, 0]}>
+        <lineBasicMaterial
+          color="#ffffff"
+          transparent
+          opacity={0.8}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </lineSegments>
+
+      {/* Galaxy rim — the clipped outer edge of the disc. */}
+      <lineSegments geometry={rimEdgeGeometry} position={[0, 0.04, 0]}>
+        <lineBasicMaterial
+          color="#8ab4ff"
+          transparent
+          opacity={0.55}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </lineSegments>
     </group>
   );
 }
 
 export type { SectorMeshData };
 
-/** Expose the sector-bounds computation so CameraFocus can size the zoom. */
 export function computeSectorBounds(galaxy: Galaxy): Map<string, SectorMeshData["bounds"]> {
   const clusterById = new Map(galaxy.clusters.map((c) => [c.id, c]));
   const groupById = new Map(galaxy.groups.map((g) => [g.id, g]));
