@@ -1,14 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { generateGalaxy, type Star } from "@space-bros/shared";
-import { MapRoot } from "./MapRoot";
-import { SystemView } from "./SystemView";
+import { useMemo } from "react";
+import dynamic from "next/dynamic";
+import { generateGalaxy } from "@space-bros/shared";
 import { ResearchPanel } from "./ResearchPanel";
 import { ResourcesHud } from "./ResourcesHud";
 import { FleetsHud } from "./FleetsHud";
 import { usePlayer } from "./usePlayer";
 import { IS_OFFLINE, resetOfflineState } from "@/lib/api";
+
+// Three.js needs to run in the browser — lazy import with SSR off.
+const Scene3D = dynamic(() => import("./Scene3D").then((m) => m.Scene3D), {
+  ssr: false,
+  loading: () => <div className="loading">Warming up the galaxy…</div>,
+});
 
 interface GalaxySceneProps {
   seed: string | number;
@@ -24,7 +29,6 @@ function parseStarFromPlanetId(planetId: string): number | null {
 
 export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
   const galaxy = useMemo(() => generateGalaxy({ seed, starCount }), [seed, starCount]);
-  const [selectedStar, setSelectedStar] = useState<Star | null>(null);
   const player = usePlayer();
 
   const me = player.data;
@@ -32,24 +36,17 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
 
   const homeStarId = me?.homeColony ? parseStarFromPlanetId(me.homeColony.planetId) : null;
 
-  const ownedPlanetIds = useMemo(() => {
-    return new Set(me?.colonies.map((c) => c.planetId) ?? []);
-  }, [me]);
-
-  const inFlightPlanetIds = useMemo(() => {
-    const set = new Set<string>();
-    if (!me) return set;
-    for (const f of me.fleets) {
-      for (const planet of galaxy.stars[f.toStarId]?.planets ?? []) {
-        set.add(`${f.toStarId}:${planet.index}`);
-      }
-    }
-    return set;
-  }, [me, galaxy]);
-
   return (
     <div className="scene">
-      <MapRoot galaxy={galaxy} onSelectStar={setSelectedStar} />
+      <div className="nebula-bg" aria-hidden>
+        <div className="nebula-layer layer-a" />
+        <div className="nebula-layer layer-b" />
+        <div className="nebula-layer layer-c" />
+        <div className="nebula-layer layer-d" />
+        <div className="nebula-grain" />
+      </div>
+
+      <Scene3D galaxy={galaxy} homeStarId={homeStarId} />
 
       <header className="hud">
         <h1>
@@ -67,7 +64,7 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
             {" · "}
             {hasHome
               ? `${me.colonies.length} ${me.colonies.length === 1 ? "colony" : "colonies"}`
-              : "pick a home planet"}
+              : "no home yet"}
           </p>
         ) : player.loading ? (
           <p className="muted">loading player…</p>
@@ -76,7 +73,7 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
         ) : null}
         {me ? <ResourcesHud me={me} /> : null}
         <p className="muted hint">
-          Click a sector to zoom · tap a star at cluster level for details
+          Left-drag rotate · right-drag pan · scroll / pinch zoom · click to drill in
         </p>
         {IS_OFFLINE ? (
           <button
@@ -95,20 +92,6 @@ export default function GalaxyScene({ seed, starCount }: GalaxySceneProps) {
 
       {me && hasHome ? <ResearchPanel me={me} startResearch={player.startResearch} /> : null}
       {me ? <FleetsHud me={me} /> : null}
-
-      {selectedStar ? (
-        <SystemView
-          star={selectedStar}
-          onClose={() => setSelectedStar(null)}
-          canPickHome={me != null && !hasHome}
-          pickHome={player.pickHome}
-          launchColony={player.launchColony}
-          hasHome={hasHome}
-          homeStarId={homeStarId}
-          ownedPlanetIds={ownedPlanetIds}
-          inFlightPlanetIds={inFlightPlanetIds}
-        />
-      ) : null}
     </div>
   );
 }

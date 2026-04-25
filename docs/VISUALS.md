@@ -356,6 +356,294 @@ apps/web/app/galaxy/
   the selected cluster's stars are raycast-active. Filter raycast, not
   the draw.
 
+## 7a. Hierarchy rewrite (V-1.8 plan — pending)
+
+Current approach is **top-down**: we decide sector wedges first, then
+place stars, then assign clusters by nearest centroid. Even with
+noise-perturbed edges this reads as pie slices because the underlying
+geometry _is_ pie slices. User feedback after V-1.7: "hardcore still
+a pie."
+
+**Switch to bottom-up** per Red Blob. The algorithm:
+
+1. **Groups** (smallest unit) — place ~1000 group centroids with a
+   spiral-density bias. Poisson-disk or stratified random so centroids
+   don't cluster. Each group holds ~12 stars (assign each star to its
+   nearest centroid → Voronoi cell).
+
+2. **Clusters** — aggregate groups into ~50 clusters via k-means on
+   group centroid positions. Each cluster = union of ~20 Voronoi cells.
+
+3. **Sectors** — aggregate clusters into ~10 sectors via k-means on
+   cluster centroids. Each sector = union of ~5 clusters = ~100
+   Voronoi cells.
+
+Boundaries are **shared polygon edges** — no pie wedges, no perturbed
+arcs. Two neighbouring clusters literally share the same edge because
+it's the same Voronoi edge. No z-fighting, no overlap, no gaps.
+
+Dependencies to add:
+- `d3-delaunay` — Voronoi tessellation
+- `polygon-clipping` — boolean polygon union for cluster/sector shapes
+
+What the current code keeps:
+- Star field rendering (canvas)
+- SVG overlay + zoom/pan + 3D pitch
+- Color palette (10 hues still fine)
+- Galaxy seed + spiral star placement pass
+
+What gets replaced:
+- `wedgePath` in `map-helpers.ts` — replaced by per-cluster and
+  per-sector polygon paths, precomputed at galaxy generation time
+- `classifyPosition` in `sectors.ts` — replaced by nearest-centroid
+- The 4-Core-quadrants + 6-outer-wedge decomposition in `sectors.ts` —
+  replaced by k-means aggregation
+- `generateClusters` in `clusters.ts` — replaced by the bottom-up
+  aggregation pipeline
+
+Cluster / sector naming stays roughly the same — we can still name a
+sector after a proper noun and label clusters `ORN-03` style. The
+grid coordinate scheme disappears because clusters are no longer
+placed on a sector-local grid. We'll attach a running index instead
+(ORN-04, CN-02, etc.).
+
+### Navigation
+
+Five discrete zoom levels instead of three:
+
+- galaxy → sector
+- sector → cluster
+- cluster → group
+- group → star → system
+
+At group level, stars should be fat and sparse — the "dozen stars you
+can easily click" experience.
+
+### Home / controlled markers (part of V-1.8)
+
+- Home star: keep the pulsing ring; show at every level.
+- Controlled stars: smaller coloured ring in the player's sector
+  colour. Visible at cluster + group + system preview levels.
+- When a player controls enough stars to justify it, **draw
+  player-specific borders** as a second polygon layer on top of the
+  base map — a coloured outline around the union of their
+  star-containing groups.
+
+### Zoom must be a real camera, not a CSS scale
+
+Current V-1.7 zoom applies a CSS `scale(zoom)` to the stage.
+That just magnifies pixels — same stars, blurrier. Detail doesn't
+emerge, small stars don't resolve into clusters.
+
+**Correct behaviour**: zoom narrows the SVG `viewBox` (and the
+Canvas projection bounds) around a pivot point. More galaxy-space
+per screen-pixel = more detail. Pan becomes "pivot point moves in
+galaxy-space coords." Zooming in at a point keeps that point fixed
+on screen (standard pivot-zoom).
+
+Impl: replace the stage `transform: scale()` with derived
+`Bounds`-from-`(pivot, zoom, levelBounds)`. Re-render canvas +
+re-emit SVG on zoom change. ViewBox = `levelBounds` inset toward
+pivot by `(1 - 1/zoom)`.
+
+Ship this fix alongside V-1.8 or as a standalone V-1.7.1.
+
+### Complete user-feedback inventory
+
+Everything the user has said about the galaxy map, consolidated:
+
+1. Spiral not actually spiral — **V-1.6 fixed math**
+2. Stars too tiny — **V-1.5 min size fix**
+3. Need dust particles — **V-1.5 added**
+4. Need clickable sectors — **V-1.5 added SVG wedges**
+5. Want 2D drill-down map, not 3D flythrough — **V-1.5 pivoted**
+6. Don't want continuous zoom through levels — **V-1.5 discrete levels**
+7. Dust + nebula not visible — **V-1.5 added CSS nebula wash**
+8. Galaxy should be 3D pitched view with pan — **V-1.6 CSS perspective**
+9. Sectors too uniform — **V-1.6 noise-perturbed edges** (insufficient)
+10. Break Core into 4 quadrants — **V-1.6 did it**
+11. Auto-deploy from any branch — **V-1.5 workflow fixed**
+12. Min zoom per level — **V-1.7 added** (but not real camera zoom)
+13. Sector borders Y-offset in 3D — **V-1.7 transform-style: flat** (still present)
+14. Still pie-shaped — **V-1.7 shared-noise edges** (user says still pie)
+15. Hard galaxy edge — **V-1.7 exponential falloff**
+16. Many clusters, "groups" of ~12 stars each — **pending V-1.8**
+17. Home star marker at all levels — **V-1.7 added pulsing ring**
+18. Controlled-star markers — **pending V-1.8**
+19. Player territories form dynamically — **pending V-1.8**
+20. Bottom-up construction, not pie — **pending V-1.8**
+21. Zoom should move camera, not scale renderer — **pending V-1.7.1**
+
+### Renderer bugs to fix alongside the camera rewrite
+
+All of the below go into V-1.7.1 (renderer-level, pre-hierarchy) so
+the polygon rewrite in V-1.8 lands on top of a healthy base.
+
+- **Desktop clicks miss sectors/clusters/stars.** Root cause: the
+  click guard in `MapRoot.tsx` reads `gesture.current.kind === "pan"`
+  with `moved` set, but the `pan` gesture is entered on _every_
+  pointerdown, not just when a drag actually starts. Desktop clicks
+  pass `moved=false` but the guard check may still have stale state
+  from a previous drag. Fix: reset `gesture.current = { kind: "none" }`
+  on every pointerup _after_ the click fires; or replace the
+  gesture-state guard with a pure "drag distance exceeded threshold
+  since pointerdown" check scoped to the current pointer event.
+
+- **Hit area is a rectangle, not polygon-exact.** The `<g>` wrapping
+  each sector also contains a `<text>` label whose bounding box is
+  rectangular and catches clicks. Clicking the label anywhere —
+  including the parts of the label that overhang the polygon edge —
+  fires the sector onClick. Fix: `pointer-events="none"` on every
+  SVG `<text>` in the map; `pointer-events="fill"` (or default
+  `visiblePainted`) only on the `<path>`. Do the same pattern for
+  clusters and cluster-stars.
+
+- **Level change teleports instead of zooming.** Clicking a sector
+  instantly re-renders at the sector's viewBox. Should be a brief
+  animated zoom-in from the current view's bounds to the target's
+  bounds. Options: (a) CSS transition on the stage transform (works
+  but fights the upcoming real-camera-zoom implementation), (b)
+  animate the SVG viewBox over ~300ms via requestAnimationFrame,
+  lerping the four numbers. Go with (b) so it composes with the
+  pivot-preserving zoom from V-1.7.1 — both manipulate the same
+  `Bounds` state.
+
+- **Off-zone stars stay bright.** When a sector/cluster is selected,
+  stars outside the active zone are still drawn at full colour. User
+  wants them desaturated/alpha'd so the active region reads as the
+  focus. Fix in the canvas draw loop per level:
+  - Galaxy level: no desaturation (all equal weight)
+  - Sector level: non-sector stars drawn at `alpha *= 0.22` and
+    desaturated toward `#444` by ~60%
+  - Cluster level: non-cluster stars drawn at `alpha *= 0.15`,
+    desaturated toward `#333` by ~75%
+  Do the same for dust particles.
+
+### Scope
+
+- **V-1.7.1** — renderer cleanup:
+  1. Real camera zoom (viewBox-based, pivot-preserving) replacing
+     CSS scale.
+  2. Polygon-exact hit areas (`pointer-events` on paths only).
+  3. Animated viewBox transitions on level change (~300ms).
+  4. Off-zone star/dust desaturation per level.
+  5. Click-guard fix so desktop clicks work reliably.
+  Scoped to `MapRoot.tsx`, `GalaxyMap.tsx`, `SectorMap.tsx`,
+  `ClusterMap.tsx`, `globals.css`. No data changes.
+
+- **V-1.8a** — replace galaxy generator with the Voronoi + k-means
+  pipeline. Data only, no rendering changes. Tests for determinism
+  + hierarchy integrity (every star → one group → one cluster → one
+  sector).
+
+- **V-1.8b** — switch map renderers to use polygon paths from the
+  new hierarchy. Galaxy/sector/cluster levels render polygon unions.
+
+- **V-1.8c** — add Group level between cluster and star. Discrete
+  level, same camera animation as the others.
+
+- **V-1.8d** — controlled-star markers + dynamic player-territory
+  polygon (second polygon layer above the base map).
+
+## 7b. V-2.0 — nuke 2D map, go full 3D Three.js
+
+After V-1.7.1 the 2D SVG+Canvas map with CSS `rotateX` was rejected:
+zoom felt like scaling pixels, not camera movement; sector edges
+z-fought; it reads "rendered to a quad" rather than "in space." User
+directive: go back to Three.js 3D and add the spiral pattern.
+
+### What gets nuked
+
+Delete:
+- `apps/web/app/galaxy/MapRoot.tsx`
+- `apps/web/app/galaxy/GalaxyMap.tsx`
+- `apps/web/app/galaxy/SectorMap.tsx`
+- `apps/web/app/galaxy/ClusterMap.tsx`
+- `apps/web/app/galaxy/Breadcrumb.tsx`
+- `apps/web/app/galaxy/NebulaBackground.tsx` (replaced by 3D skybox
+  or kept as CSS behind the Canvas — TBD)
+- `apps/web/app/galaxy/map-helpers.ts` (most of it; keep colour tables)
+
+### What we keep
+
+- `packages/shared/src/galaxy.ts` — three-pass spiral generator, sectors,
+  clusters, soft edge falloff. That data layer is fine.
+- `apps/web/app/galaxy/SystemView.tsx` — opens when you click a star.
+- `apps/web/app/galaxy/usePlayer.ts` and all adapters — untouched.
+- HUD + Research + Fleets + Resources panels — untouched.
+
+### Border code — also nuked, rewritten bottom-up later
+
+Sector wedges and all wedge-based border rendering are deleted too.
+V-2.0 ships with NO visible sector borders — just the 3D galaxy and
+stars. Borders return in V-2.1 via bottom-up construction:
+
+1. Voronoi tessellation over per-star (or per-group) centroids.
+2. K-means aggregate cells into clusters.
+3. K-means aggregate clusters into sectors.
+4. Render each sector as a 3D mesh whose outline is the union of its
+   member Voronoi cells — actual shared polygon edges, no wedges, no
+   sin-harmonic fake noise.
+
+For V-2.0 the data model (sectors, clusters, star.sectorId) stays so
+nothing else breaks, but none of it renders visually. User can navigate
+with a free orbital camera and click individual stars.
+
+### What replaces it
+
+New `Scene3D.tsx` built around Three.js via `@react-three/fiber`
+(already installed from V-2 era):
+
+- `<Canvas>` filling the viewport, black/navy clear colour with a
+  3D skybox (large inverted sphere with radial-gradient + noise
+  shader for the nebula wash). For V-2.0, CSS nebula stays behind
+  the Canvas as a cheap backdrop; 3D skybox is V-2.2.
+- `<Stars3D>` — instanced `THREE.Points` for all 12k stars.
+  Point-size shader with `sizeAttenuation` so zoom actually makes
+  closer stars bigger. Min size clamped so distant stars still
+  render as at least 2 px. Colour by spectral class. Subtle
+  additive blending.
+- `<HomeMarker3D>` — three concentric tori at the home star, pulsing
+  via `useFrame`. Always legible from the camera angle.
+- `<CameraController>` — wraps `OrbitControls` from drei with:
+  - Constrained pitch (maxPolarAngle ≈ 85°, minPolarAngle ≈ 30°)
+    so you can't flip below or go fully top-down.
+  - Smooth damping (`enableDamping`, `dampingFactor ≈ 0.08`).
+  - Zoom range that actually shows the galaxy (`minDistance`,
+    `maxDistance` tuned to `galaxy.radius`).
+
+### Navigation model
+
+Free orbital camera, **not** discrete zoom levels. Clicking a sector
+focuses the camera on that sector (smooth lerp) but all stars stay
+visible — no hide/fade. Clicking a star opens the existing SystemView
+panel. Breadcrumb gone; replaced by a "Focus reset" button in the HUD
+that returns the camera to galaxy overview.
+
+Per earlier user feedback, no continuous-through-levels zoom UX. But
+_within_ the 3D scene, zoom is continuous — that's what the user means
+by "smooth zoom." Discreteness is for navigation (sector focus), not
+camera movement.
+
+### Visual targets (each a separate V-2.x follow-up if needed)
+
+- V-2.0: scene rebuilt, stars render, camera orbits, sectors visible
+  as flat wedges, click star opens SystemView.
+- V-2.1: upgraded star shader (chromatic aberration, spikes, HDR-ish
+  bloom via `UnrealBloomPass`).
+- V-2.2: 3D nebula backdrop shader (vs current CSS).
+- V-2.3: 3D sector polygon shapes (Voronoi union from V-1.8 moved to
+  3D).
+- V-2.4: per-star 3D sphere swap when camera zooms close to one.
+
+### Dependencies already installed
+
+- `three`
+- `@react-three/fiber`
+- `@react-three/drei`
+
+No new deps needed for V-2.0.
+
 ## 8. Sources
 
 - [bpodgursky — Procedural star rendering with three.js and WebGL shaders](https://bpodgursky.com/2017/02/01/procedural-star-rendering-with-three-js-and-webgl-shaders/)

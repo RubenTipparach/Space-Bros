@@ -1,15 +1,10 @@
 import { rngFromSeed, weightedPick, rangeFloat, rangeInt, type Rng } from "./rng.ts";
 import {
-  CORE_INNER_RADIUS_FRACTION,
-  classifyPosition,
-  generateSectors,
-  type Sector,
-} from "./sectors.ts";
-import {
-  classifyClusterForStar,
-  generateClusters,
-  type Cluster,
-} from "./clusters.ts";
+  buildHierarchy,
+  type HCluster,
+  type HGroup,
+  type HSector,
+} from "./hierarchy.ts";
 
 export type SpectralClass = "O" | "B" | "A" | "F" | "G" | "K" | "M";
 
@@ -41,9 +36,18 @@ export interface Star {
   z: number;
   spectralClass: SpectralClass;
   planets: Planet[];
-  sectorId: string;
+  groupId: string;
   clusterId: string;
+  sectorId: string;
 }
+
+/**
+ * Re-exports for convenience — consumers can `import { Sector } from
+ * "@space-bros/shared"` without remembering which file it lives in.
+ */
+export type Sector = HSector;
+export type Cluster = HCluster;
+export type Group = HGroup;
 
 export interface Galaxy {
   seed: number | string;
@@ -52,6 +56,7 @@ export interface Galaxy {
   stars: Star[];
   sectors: Sector[];
   clusters: Cluster[];
+  groups: Group[];
 }
 
 export interface GenerateGalaxyOptions {
@@ -59,18 +64,23 @@ export interface GenerateGalaxyOptions {
   starCount: number;
   radius?: number;
   thickness?: number;
-  /** Arm count. 4 gives clear structure without obvious streaks. */
   branches?: number;
-  /** Total swirl (radians) from center to rim. */
   spin?: number;
-  /** Gaussian jitter magnitude as a fraction of radius. */
   randomness?: number;
-  /** Legacy knob — currently unused by the 3-pass generator. */
-  randomnessPower?: number;
+  /** ~12 stars per group. */
+  groupCount?: number;
+  /** ~16 groups per cluster. */
+  clusterCount?: number;
+  /** Target count for named top-level regions. */
+  sectorCount?: number;
 }
 
-/** Bumped each time the generator's output shape meaningfully changes. */
-export const GENERATOR_VERSION = 3;
+/**
+ * Bumped to 4 for V-2.1 — star shape adds `groupId`, galaxy shape adds
+ * `groups[]`, sectors/clusters are now bottom-up aggregations so any
+ * downstream code that indexed them by wedge math is broken.
+ */
+export const GENERATOR_VERSION = 4;
 
 const SPECTRAL_WEIGHTS: readonly (readonly [SpectralClass, number])[] = [
   ["O", 0.0001],
@@ -110,10 +120,6 @@ const BIOME_HABITABILITY: Record<Biome, number> = {
 
 // ---- Three-pass star position generator ----------------------------------
 
-/**
- * Box-Muller-ish gaussian draw. Returns a standard-normal sample.
- * Sufficient for dust / jitter; not cryptographic.
- */
 function gaussian(rng: Rng): number {
   let u = 0;
   let v = 0;
@@ -128,10 +134,6 @@ interface XYZ {
   z: number;
 }
 
-/**
- * Core bulge — tight gaussian around (0, 0) with a small vertical
- * thickness. Creates the bright central clump.
- */
 function corePosition(rng: Rng, radius: number, thickness: number): XYZ {
   const sigma = radius * 0.08;
   return {
@@ -141,14 +143,7 @@ function corePosition(rng: Rng, radius: number, thickness: number): XYZ {
   };
 }
 
-/**
- * Disk scatter — exponential falloff in radius + uniform angle. Fills
- * the space between spiral arms with soft background stars, which is
- * what actually kills the "rigid branches" look.
- */
 function diskPosition(rng: Rng, radius: number, thickness: number): XYZ {
-  // Exponential with scale 0.38 × radius → most stars inside mid-disk,
-  // long tail to the rim. Capped so the tail doesn't go past the rim.
   let r = 0;
   for (let tries = 0; tries < 8; tries++) {
     r = -Math.log(1 - rng()) * radius * 0.38;
@@ -163,13 +158,6 @@ function diskPosition(rng: Rng, radius: number, thickness: number): XYZ {
   };
 }
 
-/**
- * Arm star — straight-line branch with soft assignment + gaussian
- * perpendicular jitter, then a "swirl" rotates the point by an amount
- * proportional to its radius. This is the classic
- * straight-arms-then-bend technique (Devans, Beltoforion) and avoids
- * the single-radial-streak artifact of pure pow-based spirals.
- */
 function armPosition(
   rng: Rng,
   opts: {
@@ -180,27 +168,16 @@ function armPosition(
     randomness: number;
   },
 ): XYZ {
-  // Soft branch assignment: pick a fractional branch with jitter in
-  // branch-space so stars near a boundary can drift into the next arm.
   const softBranchF = rng() * opts.branches;
   const branchIdx = Math.floor(softBranchF);
-  const branchJitter = ((softBranchF - branchIdx) - 0.5) * 0.6; // ±0.3
-  const branchAngle =
-    ((branchIdx + branchJitter) / opts.branches) * Math.PI * 2;
-
-  // Uniform r; per-area density is higher near the core automatically.
+  const branchJitter = ((softBranchF - branchIdx) - 0.5) * 0.6;
+  const branchAngle = ((branchIdx + branchJitter) / opts.branches) * Math.PI * 2;
   const r = rng() * opts.radius;
-
-  // Gaussian along-radius perturbation (small) and perpendicular jitter
-  // (the one that smears the arm). perpendicular scales with r, so core
-  // arms are tight and rim arms fan out.
   const radialJitter = gaussian(rng) * opts.radius * 0.02;
   const perpJitter = gaussian(rng) * (r * opts.randomness + opts.radius * 0.04);
-
   const swirl = (r / Math.max(1, opts.radius)) * opts.spin;
   const angle = branchAngle + swirl;
   const perpAngle = angle + Math.PI / 2;
-
   const eR = r + radialJitter;
   return {
     x: Math.cos(angle) * eR + Math.cos(perpAngle) * perpJitter,
@@ -235,38 +212,52 @@ export function generateGalaxy(opts: GenerateGalaxyOptions): Galaxy {
   const spin = opts.spin ?? 3.2;
   const randomness = opts.randomness ?? 0.18;
 
-  const sectors = generateSectors(seed);
-  const clusters = generateClusters({ seed, sectors, galaxyRadius: radius });
-
   const rng = rngFromSeed(seed);
-  const stars: Star[] = new Array(starCount);
+  const rawPositions: XYZ[] = new Array(starCount);
 
-  // Allocation: 18% core bulge, 28% disk background, 54% arms.
   const coreCount = Math.floor(starCount * 0.18);
   const diskCount = Math.floor(starCount * 0.28);
+  const softRadius = radius * 1.18;
 
   for (let i = 0; i < starCount; i++) {
     let pos: XYZ;
-    if (i < coreCount) {
-      pos = corePosition(rng, radius, thickness);
-    } else if (i < coreCount + diskCount) {
-      pos = diskPosition(rng, radius, thickness);
-    } else {
-      pos = armPosition(rng, { radius, thickness, branches, spin, randomness });
-    }
+    if (i < coreCount) pos = corePosition(rng, radius, thickness);
+    else if (i < coreCount + diskCount) pos = diskPosition(rng, radius, thickness);
+    else pos = armPosition(rng, { radius, thickness, branches, spin, randomness });
 
-    // Clamp stars to the disk so nothing escapes the visible galaxy.
     const r = Math.hypot(pos.x, pos.z);
     if (r > radius) {
-      const s = radius / r;
-      pos.x *= s;
-      pos.z *= s;
+      const over = (r - radius) / (softRadius - radius);
+      const keep = Math.exp(-over * 3);
+      if (rng() > keep) {
+        const target = radius * (0.85 + rng() * 0.12);
+        const s = target / r;
+        pos.x *= s;
+        pos.z *= s;
+      } else if (r > softRadius) {
+        const s = softRadius / r;
+        pos.x *= s;
+        pos.z *= s;
+      }
     }
+    rawPositions[i] = pos;
+  }
 
-    const sector = classifyPosition(pos.x, pos.z, radius, sectors);
-    let cluster = classifyClusterForStar(pos.x, pos.z, sector.id, clusters);
-    if (!cluster) cluster = clusters[0]!;
+  // Build the bottom-up hierarchy from the star positions — this runs
+  // k-means / Voronoi over the full population, so it must happen
+  // AFTER the stars are placed.
+  const hierarchy = buildHierarchy({
+    seed,
+    stars: rawPositions.map((p) => ({ x: p.x, z: p.z })),
+    galaxyRadius: radius,
+    groupCount: opts.groupCount,
+    clusterCount: opts.clusterCount,
+    sectorCount: opts.sectorCount,
+  });
 
+  const stars: Star[] = new Array(starCount);
+  for (let i = 0; i < starCount; i++) {
+    const pos = rawPositions[i]!;
     const spectralClass = weightedPick(rng, SPECTRAL_WEIGHTS);
     stars[i] = {
       id: i,
@@ -275,8 +266,9 @@ export function generateGalaxy(opts: GenerateGalaxyOptions): Galaxy {
       z: pos.z,
       spectralClass,
       planets: generatePlanets(rng, i),
-      sectorId: sector.id,
-      clusterId: cluster.id,
+      groupId: hierarchy.starGroupIds[i]!,
+      clusterId: hierarchy.starClusterIds[i]!,
+      sectorId: hierarchy.starSectorIds[i]!,
     };
   }
 
@@ -285,9 +277,8 @@ export function generateGalaxy(opts: GenerateGalaxyOptions): Galaxy {
     generatorVersion: GENERATOR_VERSION,
     radius,
     stars,
-    sectors,
-    clusters,
+    sectors: hierarchy.sectors,
+    clusters: hierarchy.clusters,
+    groups: hierarchy.groups,
   };
 }
-
-export { CORE_INNER_RADIUS_FRACTION };
