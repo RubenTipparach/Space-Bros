@@ -177,13 +177,13 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
     defaultDistance,
   ]);
 
-  // Distance above which "zoom out" triggers the popper. Set to
-  // 1.6 × the current level's own focus distance so zooming back out
-  // past your own frame by a comfortable margin pops you up.
-  // Infinity at galaxy level (no parent to pop to).
+  // Distance above which "zoom out" triggers the popper. 1.35× the
+  // level's own focus distance — small enough that a deliberate scroll-
+  // back reads as "pop me up" without firing during the zoom-in
+  // animation. Infinity at galaxy level (nothing to pop to).
   const zoomOutTrigger = useMemo(() => {
     if (viewLevel === "galaxy") return Infinity;
-    return focusDistance * 1.6;
+    return focusDistance * 1.35;
   }, [viewLevel, focusDistance]);
 
   const popLevel = () => {
@@ -303,7 +303,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
             }}
             sectorEdges={borders.sectorEdges}
             rimEdges={borders.rimEdges}
-            active={viewLevel === "galaxy"}
+            active={viewLevel === "galaxy" || viewLevel === "sector"}
           />
         ) : null}
 
@@ -320,7 +320,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
               setSelectedStarId(null);
             }}
             clusterEdges={clusterEdgesForSelected}
-            active={viewLevel === "sector"}
+            active={viewLevel === "sector" || viewLevel === "cluster"}
           />
         ) : null}
 
@@ -336,7 +336,7 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
               setSelectedStarId(null);
             }}
             groupEdges={groupEdgesForSelected}
-            active={viewLevel === "cluster"}
+            active={viewLevel === "cluster" || viewLevel === "group"}
           />
         ) : null}
 
@@ -352,9 +352,11 @@ export function Scene3D({ galaxy, homeStarId }: Props) {
           <Stars3D
             galaxy={galaxy}
             onSelectStar={(s: Star) => setSelectedStarId(s.id)}
-            active={viewLevel === "group"}
+            active={viewLevel === "group" || viewLevel === "star"}
             selectableStarIds={
-              viewLevel === "group" ? groupStarIds : null
+              viewLevel === "group" || viewLevel === "star"
+                ? groupStarIds
+                : null
             }
           />
         ) : null}
@@ -423,14 +425,15 @@ interface ZoomOutPopperProps {
 
 /**
  * Watches the orbit-controls camera distance. Once the user has
- * scrolled further out than `triggerDistance` for ~15 consecutive
- * frames (~0.25 s), pops up one level.
+ * scrolled further out than `triggerDistance` for ~7 consecutive
+ * frames (~0.12 s), pops up one level. Treats zoom-out as the
+ * primary "deselect" gesture — fast enough to feel responsive when
+ * switching siblings within a level.
  *
- * Frame-count hysteresis keeps brief overshoots from firing, but we
- * intentionally drop the "has CameraFocus settled?" gate that the
- * previous revision had — the one-shot CameraFocus releases control
- * once it lands, so any sustained big distance after that is a real
- * user zoom-out.
+ * The gate: `hasReached` flips true once the camera has descended
+ * below 1.2 × the level's own focus distance, meaning the zoom-in
+ * animation has landed. Without that gate the popper would fire
+ * during the inbound animation from the parent level.
  */
 function ZoomOutPopper({ triggerDistance, onPop }: ZoomOutPopperProps) {
   const camera = useThree((s) => s.camera);
@@ -440,9 +443,7 @@ function ZoomOutPopper({ triggerDistance, onPop }: ZoomOutPopperProps) {
   const frames = useRef(0);
   const hasReached = useRef(false);
 
-  // Reset "has the camera arrived at this level's frame?" whenever the
-  // trigger changes (i.e. we switched levels). Prevents the popper
-  // from firing during the zoom-IN animation from the parent level.
+  // Reset arrival state whenever the trigger changes (switched levels).
   useEffect(() => {
     hasReached.current = false;
     frames.current = 0;
@@ -459,18 +460,16 @@ function ZoomOutPopper({ triggerDistance, onPop }: ZoomOutPopperProps) {
     }
     const dist = camera.position.distanceTo(controls.target);
 
-    // Infer the level's focus distance from the trigger. Mark the
-    // camera as "arrived" once it drops below 1.25 × that, meaning the
-    // zoom-in animation has landed and any further outward motion is
-    // a genuine user zoom-out.
-    const focusDistance = triggerDistance / 1.6;
-    if (!hasReached.current && dist < focusDistance * 1.25) {
+    // Trigger is 1.35 × focusDistance. Mark "arrived" once the
+    // camera has descended below 1.2 × focusDistance.
+    const focusDistance = triggerDistance / 1.35;
+    if (!hasReached.current && dist < focusDistance * 1.2) {
       hasReached.current = true;
     }
 
     if (hasReached.current && dist > triggerDistance) {
       frames.current += 1;
-      if (frames.current >= 15) {
+      if (frames.current >= 7) {
         frames.current = 0;
         onPop();
       }
